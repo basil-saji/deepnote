@@ -1,0 +1,2224 @@
+diff --git a/src/main/java/com/deepnote/ui/AIAssistantPanel.java b/src/main/java/com/deepnote/ui/AIAssistantPanel.java
+index 0bf4b5c..31439dd 100644
+--- a/src/main/java/com/deepnote/ui/AIAssistantPanel.java
++++ b/src/main/java/com/deepnote/ui/AIAssistantPanel.java
+@@ -5,122 +5,166 @@ import com.deepnote.model.ChatMessage;
+ 
+ import javax.swing.*;
+ import java.awt.*;
++import java.awt.event.FocusAdapter;
++import java.awt.event.FocusEvent;
++import java.awt.event.KeyEvent;
+ import java.util.ArrayList;
+ import java.util.List;
+ import java.util.function.Supplier;
+ 
+-/** Right-side, note-scoped assistant view. */
++/** Right-side, note-scoped assistant: a calm chat view with suggestions, bubbles and a rounded composer. */
+ public class AIAssistantPanel extends JPanel {
++    private static final String[][] SUGGESTIONS = {
++            {"Summarize this note", "Summarize this note in a few sentences."},
++            {"Explain it simply", "Explain this note in simple terms."},
++            {"List the key points", "List the key points of this note as short items."},
++            {"What details are missing?", "What important details seem to be missing from this note?"}
++    };
++
+     private final JLabel noteLabel = new JLabel();
+-    private final JPanel messageList = new JPanel();
++    private final ScrollableColumn messageList = new ScrollableColumn(null, false);
+     private final JScrollPane messageScroll;
+-    private final JTextArea questionField = new JTextArea(3, 1);
+-    private final JButton sendButton;
++    private final JTextArea questionField;
++    private final ModernButton sendButton = ModernButton.iconOnly(
++            DeepNoteIcon.Kind.SEND, "Send (Enter)", ModernButton.Variant.PRIMARY, 16);
+     private final JLabel statusLabel = new JLabel("Ready");
++    private final RoundedPanel composer = new RoundedPanel(new BorderLayout(8, 0), 18,
++            DeepNoteTheme.RAISED, DeepNoteTheme.BORDER);
+     private final List<ChatMessage> history = new ArrayList<>();
+     private final AIAssistantService assistantService;
+     private final Supplier<String> contentSupplier;
+     private final Runnable collapseAction;
+-    private String noteTitle;
++    private final Timer thinkingTimer;
++    private JLabel thinkingLabel;
++    private int thinkingStep;
++    private String noteTitle = "";
++    private String pendingQuestion;
++    private String lastError;
+     private boolean requestRunning;
+ 
+-    public AIAssistantPanel(AIAssistantService assistantService, Supplier<String> contentSupplier, Runnable collapseAction) {
++    public AIAssistantPanel(AIAssistantService assistantService, Supplier<String> contentSupplier,
++                            Runnable collapseAction) {
+         this.assistantService = assistantService;
+         this.contentSupplier = contentSupplier;
+         this.collapseAction = collapseAction;
+-        setBackground(DeepNoteTheme.SURFACE);
+-        setBorder(DeepNoteTheme.padding(16, 16, 16, 16));
+-        setLayout(new BorderLayout(0, 14));
++        questionField = new JTextArea(2, 1) {
++            @Override protected void paintComponent(Graphics graphics) {
++                super.paintComponent(graphics);
++                if (getDocument().getLength() > 0) return;
++                Graphics2D g = (Graphics2D) graphics.create();
++                DeepNoteTheme.smooth(g);
++                g.setColor(DeepNoteTheme.FAINT);
++                g.setFont(getFont());
++                g.drawString("Ask anything about this note…", getInsets().left,
++                        getInsets().top + g.getFontMetrics().getAscent());
++                g.dispose();
++            }
++        };
++        setBackground(DeepNoteTheme.SIDEBAR);
++        setLayout(new BorderLayout());
+         add(buildHeader(), BorderLayout.NORTH);
+ 
+-        messageList.setOpaque(false);
+         messageList.setLayout(new BoxLayout(messageList, BoxLayout.Y_AXIS));
++        messageList.setBorder(DeepNoteTheme.padding(18, 18, 8, 18));
+         messageScroll = new JScrollPane(messageList);
+         messageScroll.setBorder(null);
+         messageScroll.setOpaque(false);
+         messageScroll.getViewport().setOpaque(false);
++        messageScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+         add(messageScroll, BorderLayout.CENTER);
++        add(buildComposer(), BorderLayout.SOUTH);
+ 
+-        sendButton = new JButton("Send", new DeepNoteIcon(DeepNoteIcon.Kind.SEND, Color.WHITE));
+-        sendButton.setFont(DeepNoteTheme.BODY);
+-        sendButton.setForeground(Color.WHITE);
+-        sendButton.setBackground(DeepNoteTheme.ACCENT);
+-        sendButton.setFocusPainted(false);
+-        sendButton.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
+-        sendButton.putClientProperty("JButton.buttonType", "roundRect");
+-        sendButton.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+-        JPanel composer = buildComposer();
+-        add(composer, BorderLayout.SOUTH);
++        thinkingTimer = new Timer(380, event -> animateThinking());
+         sendButton.addActionListener(event -> sendQuestion());
+-        questionField.getInputMap().put(KeyStroke.getKeyStroke("ctrl ENTER"), "sendQuestion");
+-        questionField.getActionMap().put("sendQuestion", new AbstractAction() {
+-            @Override public void actionPerformed(java.awt.event.ActionEvent event) { sendQuestion(); }
+-        });
++        bindComposerKeys();
++        renderHistory();
+     }
+ 
++    public void setNote(String title) {
++        noteTitle = title;
++        noteLabel.setText(title);
++    }
++
++    public void focusInput() { questionField.requestFocusInWindow(); }
++
+     private JPanel buildHeader() {
+         JPanel header = new JPanel(new BorderLayout(10, 0));
+         header.setOpaque(false);
+-        JPanel titleStack = new JPanel();
+-        titleStack.setOpaque(false);
+-        titleStack.setLayout(new BoxLayout(titleStack, BoxLayout.Y_AXIS));
+-        JLabel heading = new JLabel("Ask about this note");
+-        heading.setFont(new Font("Segoe UI", Font.BOLD, 16));
++        header.setBorder(BorderFactory.createCompoundBorder(
++                DeepNoteTheme.divider(0, 0, 1, 0), DeepNoteTheme.padding(14, 18, 14, 12)));
++        IconBadge avatar = new IconBadge(DeepNoteIcon.Kind.SPARK, 32, false);
++        JPanel titles = new JPanel();
++        titles.setOpaque(false);
++        titles.setLayout(new BoxLayout(titles, BoxLayout.Y_AXIS));
++        JLabel heading = new JLabel("Ask AI");
++        heading.setFont(DeepNoteTheme.TITLE_SM);
+         heading.setForeground(DeepNoteTheme.TEXT);
+-        noteLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
++        noteLabel.setFont(DeepNoteTheme.SMALL);
+         noteLabel.setForeground(DeepNoteTheme.MUTED);
+-        titleStack.add(heading);
+-        titleStack.add(Box.createVerticalStrut(4));
+-        titleStack.add(noteLabel);
+-        header.add(titleStack, BorderLayout.CENTER);
+-        JButton closeButton = new JButton(new DeepNoteIcon(DeepNoteIcon.Kind.CLOSE, DeepNoteTheme.MUTED));
+-        closeButton.setToolTipText("Collapse assistant");
+-        closeButton.setFocusPainted(false);
+-        closeButton.setContentAreaFilled(false);
+-        closeButton.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
+-        closeButton.addActionListener(event -> collapseAction.run());
+-        header.add(closeButton, BorderLayout.EAST);
++        titles.add(heading);
++        titles.add(noteLabel);
++        JPanel left = new JPanel(new BorderLayout(10, 0));
++        left.setOpaque(false);
++        left.add(avatar, BorderLayout.WEST);
++        left.add(titles, BorderLayout.CENTER);
++        ModernButton close = ModernButton.iconOnly(DeepNoteIcon.Kind.CLOSE, "Collapse assistant",
++                ModernButton.Variant.GHOST, 16);
++        close.addActionListener(event -> collapseAction.run());
++        header.add(left, BorderLayout.CENTER);
++        header.add(close, BorderLayout.EAST);
+         return header;
+     }
+ 
+     private JPanel buildComposer() {
+         JPanel wrapper = new JPanel(new BorderLayout(0, 8));
+         wrapper.setOpaque(false);
+-        JPanel inputSurface = new JPanel(new BorderLayout(8, 0));
+-        inputSurface.setBackground(DeepNoteTheme.ELEVATED);
+-        inputSurface.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(DeepNoteTheme.BORDER), DeepNoteTheme.padding(8, 10, 8, 8)));
++        wrapper.setBorder(DeepNoteTheme.padding(6, 14, 12, 14));
++
+         questionField.setLineWrap(true);
+         questionField.setWrapStyleWord(true);
+-        questionField.setFont(DeepNoteTheme.BODY);
++        questionField.setFont(DeepNoteTheme.CHAT);
+         questionField.setForeground(DeepNoteTheme.TEXT);
+-        questionField.setBackground(DeepNoteTheme.ELEVATED);
+-        questionField.setCaretColor(DeepNoteTheme.ACCENT_HOVER);
++        questionField.setBackground(DeepNoteTheme.RAISED);
++        questionField.setOpaque(false);
+         questionField.setBorder(null);
+-        questionField.setToolTipText("Ask a question about this note (Ctrl+Enter to send)");
+-        inputSurface.add(questionField, BorderLayout.CENTER);
+-        inputSurface.add(sendButton, BorderLayout.EAST);
+-        wrapper.add(inputSurface, BorderLayout.NORTH);
++        questionField.setToolTipText("Enter to send, Shift+Enter for a new line");
++        questionField.addFocusListener(new FocusAdapter() {
++            @Override public void focusGained(FocusEvent event) { composer.setStroke(DeepNoteTheme.ACCENT); }
++            @Override public void focusLost(FocusEvent event) { composer.setStroke(DeepNoteTheme.BORDER); }
++        });
++        JPanel sendHolder = new JPanel(new BorderLayout());
++        sendHolder.setOpaque(false);
++        sendHolder.add(sendButton, BorderLayout.SOUTH);
++        composer.setBorder(DeepNoteTheme.padding(10, 14, 8, 8));
++        composer.add(questionField, BorderLayout.CENTER);
++        composer.add(sendHolder, BorderLayout.EAST);
++        wrapper.add(composer, BorderLayout.CENTER);
++
+         JPanel footer = new JPanel(new BorderLayout());
+         footer.setOpaque(false);
+-        statusLabel.setFont(new Font("Segoe UI", Font.PLAIN, 11));
++        footer.setBorder(DeepNoteTheme.padding(0, 4, 0, 0));
++        statusLabel.setFont(DeepNoteTheme.SMALL);
+         statusLabel.setForeground(DeepNoteTheme.MUTED);
++        ModernButton newChat = new ModernButton("New chat", null, ModernButton.Variant.GHOST);
++        newChat.setFont(DeepNoteTheme.SMALL_MEDIUM);
++        newChat.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
++        newChat.addActionListener(event -> clearConversation());
+         footer.add(statusLabel, BorderLayout.WEST);
+-        JButton newConversation = new JButton("New conversation");
+-        newConversation.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+-        newConversation.setForeground(DeepNoteTheme.ACCENT_HOVER);
+-        newConversation.setContentAreaFilled(false);
+-        newConversation.setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
+-        newConversation.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+-        newConversation.addActionListener(event -> clearConversation());
+-        footer.add(newConversation, BorderLayout.EAST);
++        footer.add(newChat, BorderLayout.EAST);
+         wrapper.add(footer, BorderLayout.SOUTH);
+         return wrapper;
+     }
+ 
+-    public void setNote(String title) {
+-        noteTitle = title;
+-        noteLabel.setText(title);
+-        renderHistory();
++    private void bindComposerKeys() {
++        InputMap input = questionField.getInputMap();
++        ActionMap actions = questionField.getActionMap();
++        Action send = new AbstractAction() {
++            @Override public void actionPerformed(java.awt.event.ActionEvent event) { sendQuestion(); }
++        };
++        input.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "sendQuestion");
++        input.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, KeyEvent.CTRL_DOWN_MASK), "sendQuestion");
++        input.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, KeyEvent.SHIFT_DOWN_MASK), "insert-break");
++        actions.put("sendQuestion", send);
+     }
+ 
+     private void sendQuestion() {
+@@ -131,87 +175,197 @@ public class AIAssistantPanel extends JPanel {
+         String titleAtRequest = noteTitle;
+         String contentAtRequest = contentSupplier.get();
+         requestRunning = true;
++        pendingQuestion = question;
++        lastError = null;
++        questionField.setText("");
++        questionField.setEditable(false);
+         sendButton.setEnabled(false);
+-        questionField.setEnabled(false);
+-        statusLabel.setForeground(DeepNoteTheme.ACCENT_HOVER);
+-        statusLabel.setText("Thinking…");
++        setStatus("Thinking…", DeepNoteTheme.ACCENT_TEXT);
++        renderHistory();
++        thinkingTimer.start();
+         new SwingWorker<String, Void>() {
+-            @Override protected String doInBackground() { return assistantService.answer(titleAtRequest, contentAtRequest, snapshot, question); }
++            @Override protected String doInBackground() {
++                return assistantService.answer(titleAtRequest, contentAtRequest, snapshot, question);
++            }
+ 
+             @Override protected void done() {
++                thinkingTimer.stop();
++                requestRunning = false;
++                pendingQuestion = null;
+                 try {
+-                    if (!titleAtRequest.equals(noteTitle)) return;
+                     String answer = get();
+                     history.add(new ChatMessage(ChatMessage.Role.USER, question));
+                     history.add(new ChatMessage(ChatMessage.Role.ASSISTANT, answer));
+-                    questionField.setText("");
+-                    setStatus("Ready", DeepNoteTheme.SUCCESS);
+-                    renderHistory();
++                    setStatus("Ready", DeepNoteTheme.MUTED);
+                 } catch (Exception exception) {
+-                    setStatus("Error: " + rootMessage(exception), DeepNoteTheme.DANGER);
++                    lastError = rootMessage(exception);
++                    questionField.setText(question);
++                    setStatus("Request failed", DeepNoteTheme.DANGER);
+                 } finally {
+-                    requestRunning = false;
++                    questionField.setEditable(true);
+                     sendButton.setEnabled(true);
+-                    questionField.setEnabled(true);
++                    renderHistory();
+                     questionField.requestFocusInWindow();
+                 }
+             }
+         }.execute();
+     }
+ 
+-    private void setStatus(String text, Color color) { statusLabel.setText(text); statusLabel.setForeground(color); }
+-    private void clearConversation() { history.clear(); setStatus("New conversation", DeepNoteTheme.MUTED); renderHistory(); }
++    private void animateThinking() {
++        if (thinkingLabel == null) return;
++        thinkingStep = (thinkingStep + 1) % 4;
++        thinkingLabel.setText("Thinking" + ".".repeat(thinkingStep));
++    }
++
++    private void setStatus(String text, Color color) {
++        statusLabel.setText(text);
++        statusLabel.setForeground(color);
++    }
++
++    private void clearConversation() {
++        if (requestRunning) return;
++        history.clear();
++        lastError = null;
++        setStatus("New chat", DeepNoteTheme.MUTED);
++        renderHistory();
++    }
+ 
+     private void renderHistory() {
+         messageList.removeAll();
+-        if (history.isEmpty()) {
+-            JPanel empty = new JPanel();
+-            empty.setOpaque(false);
+-            empty.setLayout(new BoxLayout(empty, BoxLayout.Y_AXIS));
+-            JLabel icon = new JLabel(new DeepNoteIcon(DeepNoteIcon.Kind.SPARK, DeepNoteTheme.ACCENT_HOVER));
+-            JLabel title = new JLabel("Your note, in conversation");
+-            title.setFont(new Font("Segoe UI", Font.BOLD, 14));
+-            title.setForeground(DeepNoteTheme.TEXT);
+-            JLabel copy = new JLabel("Ask for a summary, an explanation, or a simpler version.");
+-            copy.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+-            copy.setForeground(DeepNoteTheme.MUTED);
+-            empty.add(icon);
+-            empty.add(Box.createVerticalStrut(10));
+-            empty.add(title);
+-            empty.add(Box.createVerticalStrut(5));
+-            empty.add(copy);
+-            messageList.add(empty);
++        thinkingLabel = null;
++        if (history.isEmpty() && pendingQuestion == null && lastError == null) {
++            messageList.add(emptyState());
+         } else {
+-            for (ChatMessage message : history) {
+-                messageList.add(messageBubble(message));
+-                messageList.add(Box.createVerticalStrut(10));
++            for (ChatMessage message : history) addRow(message.role() == ChatMessage.Role.USER
++                    ? userRow(message.content()) : assistantRow(message.content()));
++            if (pendingQuestion != null) {
++                addRow(userRow(pendingQuestion));
++                addRow(thinkingRow());
+             }
++            if (lastError != null) addRow(errorRow(lastError));
+         }
+         messageList.revalidate();
+         messageList.repaint();
+-        SwingUtilities.invokeLater(() -> messageScroll.getVerticalScrollBar().setValue(messageScroll.getVerticalScrollBar().getMaximum()));
+-    }
+-
+-    private JPanel messageBubble(ChatMessage message) {
+-        JPanel bubble = new JPanel(new BorderLayout(0, 5));
+-        bubble.setOpaque(true);
+-        boolean user = message.role() == ChatMessage.Role.USER;
+-        bubble.setBackground(user ? Color.decode("#292849") : DeepNoteTheme.ELEVATED);
+-        bubble.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(user ? Color.decode("#45427A") : DeepNoteTheme.BORDER), DeepNoteTheme.padding(9, 11, 9, 11)));
+-        JLabel role = new JLabel(user ? "YOU" : "DEEPNOTE");
+-        role.setFont(DeepNoteTheme.LABEL);
+-        role.setForeground(user ? Color.decode("#C5C3FF") : DeepNoteTheme.ACCENT_HOVER);
+-        JTextArea text = new JTextArea(message.content());
+-        text.setEditable(false);
+-        text.setLineWrap(true);
+-        text.setWrapStyleWord(true);
+-        text.setFont(DeepNoteTheme.BODY);
+-        text.setForeground(DeepNoteTheme.TEXT);
+-        text.setBackground(bubble.getBackground());
+-        text.setBorder(null);
+-        bubble.add(role, BorderLayout.NORTH);
+-        bubble.add(text, BorderLayout.CENTER);
+-        return bubble;
++        SwingUtilities.invokeLater(() -> {
++            JScrollBar bar = messageScroll.getVerticalScrollBar();
++            bar.setValue(bar.getMaximum());
++        });
++    }
++
++    private void addRow(JComponent row) {
++        row.setAlignmentX(Component.LEFT_ALIGNMENT);
++        messageList.add(row);
++        messageList.add(Box.createVerticalStrut(16));
++    }
++
++    private JComponent emptyState() {
++        JPanel holder = new JPanel(new GridBagLayout());
++        holder.setOpaque(false);
++        holder.setAlignmentX(Component.LEFT_ALIGNMENT);
++        holder.setBorder(DeepNoteTheme.padding(28, 0, 0, 0));
++        JPanel content = new JPanel();
++        content.setOpaque(false);
++        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
++        IconBadge badge = new IconBadge(DeepNoteIcon.Kind.SPARK, 48, true);
++        badge.setAlignmentX(Component.CENTER_ALIGNMENT);
++        JLabel title = new JLabel("Chat with this note");
++        title.setFont(DeepNoteTheme.TITLE_SM);
++        title.setForeground(DeepNoteTheme.TEXT);
++        title.setAlignmentX(Component.CENTER_ALIGNMENT);
++        JLabel copy = new JLabel("<html><div style='text-align:center;width:250px'>Get summaries and explanations "
++                + "grounded in this note. Everything runs on your device.</div></html>");
++        copy.setFont(DeepNoteTheme.SMALL);
++        copy.setForeground(DeepNoteTheme.MUTED);
++        copy.setAlignmentX(Component.CENTER_ALIGNMENT);
++        content.add(badge);
++        content.add(Box.createVerticalStrut(14));
++        content.add(title);
++        content.add(Box.createVerticalStrut(6));
++        content.add(copy);
++        content.add(Box.createVerticalStrut(22));
++        for (String[] suggestion : SUGGESTIONS) {
++            ModernButton chip = new ModernButton(suggestion[0], DeepNoteIcon.Kind.SPARK, ModernButton.Variant.CHIP);
++            chip.setHorizontalAlignment(SwingConstants.LEFT);
++            chip.setAlignmentX(Component.CENTER_ALIGNMENT);
++            chip.setMaximumSize(new Dimension(Integer.MAX_VALUE, chip.getPreferredSize().height));
++            chip.addActionListener(event -> {
++                questionField.setText(suggestion[1]);
++                sendQuestion();
++            });
++            content.add(chip);
++            content.add(Box.createVerticalStrut(8));
++        }
++        holder.add(content);
++        return holder;
++    }
++
++    private JComponent userRow(String text) {
++        JPanel row = new JPanel(new BorderLayout());
++        row.setOpaque(false);
++        row.setBorder(DeepNoteTheme.padding(0, 36, 0, 0));
++        RoundedPanel bubble = new RoundedPanel(new BorderLayout(), 18, DeepNoteTheme.ACCENT_SOFT,
++                DeepNoteTheme.alpha(DeepNoteTheme.ACCENT, 90));
++        bubble.setBorder(DeepNoteTheme.padding(10, 14, 10, 14));
++        bubble.add(textBlock(text, DeepNoteTheme.TEXT), BorderLayout.CENTER);
++        row.add(bubble, BorderLayout.CENTER);
++        return row;
++    }
++
++    private JComponent assistantRow(String text) {
++        JPanel row = new JPanel(new BorderLayout(0, 8));
++        row.setOpaque(false);
++        row.add(assistantHeader(), BorderLayout.NORTH);
++        row.add(textBlock(text, DeepNoteTheme.TEXT_SECONDARY), BorderLayout.CENTER);
++        return row;
++    }
++
++    private JComponent thinkingRow() {
++        JPanel row = new JPanel(new BorderLayout(0, 8));
++        row.setOpaque(false);
++        row.add(assistantHeader(), BorderLayout.NORTH);
++        thinkingLabel = new JLabel("Thinking");
++        thinkingLabel.setFont(DeepNoteTheme.CHAT);
++        thinkingLabel.setForeground(DeepNoteTheme.MUTED);
++        row.add(thinkingLabel, BorderLayout.CENTER);
++        return row;
++    }
++
++    private JComponent errorRow(String message) {
++        RoundedPanel card = new RoundedPanel(new BorderLayout(0, 4), 14, DeepNoteTheme.DANGER_SOFT,
++                DeepNoteTheme.alpha(DeepNoteTheme.DANGER, 90));
++        card.setBorder(DeepNoteTheme.padding(10, 14, 10, 14));
++        JLabel title = new JLabel("Couldn't get an answer");
++        title.setFont(DeepNoteTheme.SMALL_MEDIUM);
++        title.setForeground(DeepNoteTheme.DANGER);
++        card.add(title, BorderLayout.NORTH);
++        card.add(textBlock(message, DeepNoteTheme.TEXT_SECONDARY), BorderLayout.CENTER);
++        return card;
++    }
++
++    private JComponent assistantHeader() {
++        JPanel header = new JPanel();
++        header.setOpaque(false);
++        header.setLayout(new BoxLayout(header, BoxLayout.X_AXIS));
++        JLabel name = new JLabel("DeepNote");
++        name.setFont(DeepNoteTheme.SMALL_MEDIUM);
++        name.setForeground(DeepNoteTheme.ACCENT_TEXT);
++        header.add(new IconBadge(DeepNoteIcon.Kind.SPARK, 20, false));
++        header.add(Box.createHorizontalStrut(8));
++        header.add(name);
++        header.add(Box.createHorizontalGlue());
++        return header;
++    }
++
++    private JTextArea textBlock(String text, Color color) {
++        JTextArea area = new JTextArea(text);
++        area.setEditable(false);
++        area.setLineWrap(true);
++        area.setWrapStyleWord(true);
++        area.setOpaque(false);
++        area.setBorder(null);
++        area.setFont(DeepNoteTheme.CHAT);
++        area.setForeground(color);
++        return area;
+     }
+ 
+     private String rootMessage(Exception exception) {
+diff --git a/src/main/java/com/deepnote/ui/DeepNoteIcon.java b/src/main/java/com/deepnote/ui/DeepNoteIcon.java
+index 2616fde..f0792cb 100644
+--- a/src/main/java/com/deepnote/ui/DeepNoteIcon.java
++++ b/src/main/java/com/deepnote/ui/DeepNoteIcon.java
+@@ -2,10 +2,17 @@ package com.deepnote.ui;
+ 
+ import javax.swing.*;
+ import java.awt.*;
++import java.awt.geom.Ellipse2D;
++import java.awt.geom.Line2D;
++import java.awt.geom.Path2D;
++import java.awt.geom.RoundRectangle2D;
+ 
+-/** Small line icons painted locally to keep the desktop UI dependency-light. */
++/** Rounded line icons drawn on a 24-unit grid, so they stay crisp at any size without image assets. */
+ public final class DeepNoteIcon implements Icon {
+-    public enum Kind { SEARCH, PLUS, SAVE, EDIT, TRASH, SPARK, CLOSE, SEND, DOCUMENT, CHEVRON }
++    public enum Kind {
++        SEARCH, PLUS, SAVE, EDIT, TRASH, SPARK, CLOSE, SEND, DOCUMENT, CHEVRON,
++        SIDEBAR_LEFT, SIDEBAR_RIGHT, CHECK, LOCK
++    }
+ 
+     private final Kind kind;
+     private final Color color;
+@@ -24,22 +31,95 @@ public final class DeepNoteIcon implements Icon {
+ 
+     @Override public void paintIcon(Component component, Graphics graphics, int x, int y) {
+         Graphics2D g = (Graphics2D) graphics.create();
++        DeepNoteTheme.smooth(g);
++        g.translate(x, y);
++        double scale = size / 24.0;
++        g.scale(scale, scale);
+         g.setColor(color);
+-        g.setStroke(new BasicStroke(Math.max(1.3f, size / 10f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+-        int mid = size / 2;
++        g.setStroke(new BasicStroke(1.75f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+         switch (kind) {
+-            case SEARCH -> { g.drawOval(x + 2, y + 2, size - 7, size - 7); g.drawLine(x + size - 6, y + size - 6, x + size - 2, y + size - 2); }
+-            case PLUS -> { g.drawLine(x + 3, y + mid, x + size - 3, y + mid); g.drawLine(x + mid, y + 3, x + mid, y + size - 3); }
+-            case SAVE -> { g.drawRoundRect(x + 2, y + 2, size - 4, size - 4, 3, 3); g.drawLine(x + 5, y + 3, x + 5, y + 8); g.drawRoundRect(x + 5, y + 10, size - 10, size - 7, 2, 2); }
+-            case EDIT -> { g.drawLine(x + 4, y + size - 4, x + 5, y + size - 8); g.drawLine(x + 5, y + size - 8, x + size - 5, y + 3); g.drawLine(x + size - 5, y + 3, x + size - 2, y + 6); g.drawLine(x + size - 2, y + 6, x + 6, y + size - 7); }
+-            case TRASH -> { g.drawLine(x + 4, y + 5, x + size - 4, y + 5); g.drawLine(x + 6, y + 5, x + 7, y + size - 3); g.drawLine(x + size - 6, y + 5, x + size - 7, y + size - 3); g.drawLine(x + 7, y + 3, x + size - 7, y + 3); g.drawLine(x + 8, y + 1, x + size - 8, y + 1); }
+-            case SPARK -> { g.drawLine(x + mid, y + 1, x + mid, y + 6); g.drawLine(x + mid, y + size - 6, x + mid, y + size - 1); g.drawLine(x + 1, y + mid, x + 6, y + mid); g.drawLine(x + size - 6, y + mid, x + size - 1, y + mid); g.drawLine(x + 4, y + 4, x + 7, y + 7); g.drawLine(x + size - 7, y + size - 7, x + size - 4, y + size - 4); }
+-            case CLOSE -> { g.drawLine(x + 4, y + 4, x + size - 4, y + size - 4); g.drawLine(x + size - 4, y + 4, x + 4, y + size - 4); }
+-            case SEND -> { Polygon arrow = new Polygon(new int[]{x + 2, x + size - 2, x + 2, x + 6}, new int[]{y + 2, y + mid, y + size - 2, y + mid}, 4); g.draw(arrow); g.drawLine(x + 3, y + mid, x + size - 3, y + mid); }
+-            case DOCUMENT -> { g.drawRoundRect(x + 3, y + 2, size - 6, size - 4, 2, 2); g.drawLine(x + 6, y + 6, x + size - 6, y + 6); g.drawLine(x + 6, y + 9, x + size - 6, y + 9); }
+-            case CHEVRON -> { g.drawLine(x + 4, y + 6, x + mid, y + size - 5); g.drawLine(x + mid, y + size - 5, x + size - 4, y + 6); }
++            case SEARCH -> {
++                g.draw(new Ellipse2D.Double(3.5, 3.5, 15, 15));
++                poly(g, false, 16.5, 16.5, 21, 21);
++            }
++            case PLUS -> {
++                poly(g, false, 5, 12, 19, 12);
++                poly(g, false, 12, 5, 12, 19);
++            }
++            case SAVE -> {
++                g.draw(new RoundRectangle2D.Double(4, 3, 16, 18, 4, 4));
++                poly(g, false, 8, 3, 8, 8, 15, 8, 15, 3);
++                g.draw(new RoundRectangle2D.Double(8, 13, 8, 8, 2, 2));
++            }
++            case EDIT -> {
++                poly(g, true, 4, 20, 5.2, 15.5, 16, 4.7, 19.3, 8, 8.5, 18.8);
++                poly(g, false, 14, 6.8, 17.2, 10);
++            }
++            case TRASH -> {
++                poly(g, false, 4, 7, 20, 7);
++                poly(g, false, 6, 7, 7, 20, 17, 20, 18, 7);
++                poly(g, false, 9, 7, 9, 4, 15, 4, 15, 7);
++                poly(g, false, 10, 11, 10, 16);
++                poly(g, false, 14, 11, 14, 16);
++            }
++            case SPARK -> {
++                poly(g, true, 12, 3.5, 13.9, 9.1, 19.5, 11, 13.9, 12.9, 12, 18.5, 10.1, 12.9, 4.5, 11, 10.1, 9.1);
++                poly(g, false, 18.5, 16, 18.5, 21);
++                poly(g, false, 16, 18.5, 21, 18.5);
++            }
++            case CLOSE -> {
++                poly(g, false, 6, 6, 18, 18);
++                poly(g, false, 18, 6, 6, 18);
++            }
++            case SEND -> {
++                poly(g, false, 12, 19, 12, 5);
++                poly(g, false, 6, 11, 12, 5, 18, 11);
++            }
++            case DOCUMENT -> {
++                Path2D.Double page = new Path2D.Double();
++                page.moveTo(14, 3);
++                page.lineTo(7, 3);
++                page.quadTo(5, 3, 5, 5);
++                page.lineTo(5, 19);
++                page.quadTo(5, 21, 7, 21);
++                page.lineTo(17, 21);
++                page.quadTo(19, 21, 19, 19);
++                page.lineTo(19, 8);
++                page.closePath();
++                g.draw(page);
++                poly(g, false, 14, 3, 14, 8, 19, 8);
++                poly(g, false, 9, 13, 15, 13);
++                poly(g, false, 9, 17, 15, 17);
++            }
++            case CHEVRON -> poly(g, false, 7, 10, 12, 15, 17, 10);
++            case SIDEBAR_LEFT -> {
++                g.draw(new RoundRectangle2D.Double(3, 4, 18, 16, 4, 4));
++                g.draw(new Line2D.Double(9, 4, 9, 20));
++            }
++            case SIDEBAR_RIGHT -> {
++                g.draw(new RoundRectangle2D.Double(3, 4, 18, 16, 4, 4));
++                g.draw(new Line2D.Double(15, 4, 15, 20));
++            }
++            case CHECK -> poly(g, false, 5, 12.5, 10, 17.5, 19, 7);
++            case LOCK -> {
++                g.draw(new RoundRectangle2D.Double(5, 11, 14, 10, 3, 3));
++                Path2D.Double shackle = new Path2D.Double();
++                shackle.moveTo(8, 11);
++                shackle.lineTo(8, 8);
++                shackle.quadTo(8, 4, 12, 4);
++                shackle.quadTo(16, 4, 16, 8);
++                shackle.lineTo(16, 11);
++                g.draw(shackle);
++            }
+         }
+         g.dispose();
+     }
++
++    private static void poly(Graphics2D g, boolean closed, double... points) {
++        Path2D.Double path = new Path2D.Double();
++        path.moveTo(points[0], points[1]);
++        for (int i = 2; i < points.length; i += 2) path.lineTo(points[i], points[i + 1]);
++        if (closed) path.closePath();
++        g.draw(path);
++    }
+ }
+diff --git a/src/main/java/com/deepnote/ui/DeepNoteTheme.java b/src/main/java/com/deepnote/ui/DeepNoteTheme.java
+index 3c197b1..ed37018 100644
+--- a/src/main/java/com/deepnote/ui/DeepNoteTheme.java
++++ b/src/main/java/com/deepnote/ui/DeepNoteTheme.java
+@@ -7,59 +7,116 @@ import javax.swing.border.Border;
+ import javax.swing.border.EmptyBorder;
+ import javax.swing.border.MatteBorder;
+ import java.awt.*;
++import java.awt.font.TextAttribute;
++import java.util.Arrays;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.Map;
++import java.util.Set;
+ 
+-/** Shared visual language for the DeepNote desktop shell. */
++/** Shared design system for the DeepNote desktop shell: palette, type scale and Look-and-Feel tuning. */
+ public final class DeepNoteTheme {
+-    public static final Color BACKGROUND = Color.decode("#0D1016");
+-    public static final Color SURFACE = Color.decode("#141923");
+-    public static final Color ELEVATED = Color.decode("#1B2230");
+-    public static final Color BORDER = Color.decode("#2A3240");
+-    public static final Color TEXT = Color.decode("#EDF1F7");
+-    public static final Color MUTED = Color.decode("#9AA6B8");
+-    public static final Color ACCENT = Color.decode("#8B8CF8");
+-    public static final Color ACCENT_HOVER = Color.decode("#A7A0FF");
+-    public static final Color SUCCESS = Color.decode("#5ED6A0");
+-    public static final Color WARNING = Color.decode("#F3C969");
+-    public static final Color DANGER = Color.decode("#F0788B");
+-    public static final Font BODY = new Font("Segoe UI", Font.PLAIN, 13);
+-    public static final Font BODY_LARGE = new Font("Segoe UI", Font.PLAIN, 15);
+-    public static final Font LABEL = new Font("Segoe UI", Font.BOLD, 11);
+-    public static final Font TITLE = new Font("Segoe UI", Font.BOLD, 20);
+-    public static final Font DISPLAY = new Font("Segoe UI", Font.BOLD, 28);
++    // Surfaces: sidebar is the darkest layer, the canvas is the writing surface, raised sits above both.
++    public static final Color SIDEBAR = hex("#0F1015");
++    public static final Color CANVAS = hex("#15161C");
++    public static final Color RAISED = hex("#1C1E26");
++    public static final Color HOVER = hex("#242630");
++    public static final Color BORDER = hex("#2D303C");
++    public static final Color BORDER_SOFT = hex("#22242E");
++
++    // Text
++    public static final Color TEXT = hex("#ECEDF3");
++    public static final Color TEXT_SECONDARY = hex("#B7BAC9");
++    public static final Color MUTED = hex("#8B8FA1");
++    public static final Color FAINT = hex("#5E6173");
++
++    // Accent (indigo -> violet) and semantic colours
++    public static final Color ACCENT = hex("#6C70F2");
++    public static final Color ACCENT_HOVER = hex("#7E82FF");
++    public static final Color ACCENT_PRESSED = hex("#5B5FDB");
++    public static final Color ACCENT_TEXT = hex("#AEB1FF");
++    public static final Color ACCENT_SOFT = hex("#23264F");
++    public static final Color VIOLET = hex("#A66BFF");
++    public static final Color SUCCESS = hex("#4ADE9B");
++    public static final Color WARNING = hex("#F5B94A");
++    public static final Color DANGER = hex("#FF6B7F");
++    public static final Color DANGER_SOFT = hex("#38202A");
++
++    // Type scale. Inter is used when present (see tryInstallInter), otherwise the best system UI font.
++    private static final String FAMILY = resolveFamily();
++    public static final Font BODY = font(13f, TextAttribute.WEIGHT_REGULAR);
++    public static final Font BODY_MEDIUM = font(13f, TextAttribute.WEIGHT_MEDIUM);
++    public static final Font CHAT = font(14f, TextAttribute.WEIGHT_REGULAR);
++    public static final Font SMALL = font(12f, TextAttribute.WEIGHT_REGULAR);
++    public static final Font SMALL_MEDIUM = font(12f, TextAttribute.WEIGHT_MEDIUM);
++    public static final Font LABEL = font(11f, TextAttribute.WEIGHT_DEMIBOLD)
++            .deriveFont(Map.of(TextAttribute.TRACKING, 0.08f));
++    public static final Font TITLE_SM = font(15f, TextAttribute.WEIGHT_DEMIBOLD);
++    public static final Font HEADING = font(20f, TextAttribute.WEIGHT_BOLD);
++    public static final Font DISPLAY = font(34f, TextAttribute.WEIGHT_BOLD);
++    public static final Font EDITOR = font(16f, TextAttribute.WEIGHT_REGULAR);
++    public static final Font EDITOR_TITLE = font(30f, TextAttribute.WEIGHT_BOLD);
+ 
+     private DeepNoteTheme() { }
+ 
+     public static void install() {
+         FlatDarkLaf.setup();
+-        UIManager.put("Panel.background", BACKGROUND);
++        UIManager.put("defaultFont", BODY);
++        UIManager.put("Panel.background", CANVAS);
+         UIManager.put("Label.foreground", TEXT);
+         UIManager.put("Label.disabledForeground", MUTED);
+-        UIManager.put("TextArea.background", ELEVATED);
+-        UIManager.put("TextArea.foreground", TEXT);
+-        UIManager.put("TextArea.caretForeground", ACCENT_HOVER);
+-        UIManager.put("TextArea.selectionBackground", Color.decode("#3A3B70"));
+-        UIManager.put("TextArea.selectionForeground", TEXT);
+-        UIManager.put("TextField.background", ELEVATED);
++        UIManager.put("Component.arc", 12);
++        UIManager.put("Button.arc", 12);
++        UIManager.put("TextComponent.arc", 12);
++        UIManager.put("Component.focusWidth", 1);
++        UIManager.put("Component.focusColor", ACCENT);
++        UIManager.put("Component.borderColor", BORDER);
++        UIManager.put("TextField.background", RAISED);
+         UIManager.put("TextField.foreground", TEXT);
+-        UIManager.put("TextField.caretForeground", ACCENT_HOVER);
+-        UIManager.put("TextField.selectionBackground", Color.decode("#3A3B70"));
++        UIManager.put("TextField.caretForeground", ACCENT_TEXT);
++        UIManager.put("TextField.selectionBackground", ACCENT_SOFT);
+         UIManager.put("TextField.selectionForeground", TEXT);
+-        UIManager.put("TabbedPane.background", SURFACE);
+-        UIManager.put("TabbedPane.contentAreaColor", SURFACE);
+-        UIManager.put("TabbedPane.selectedBackground", SURFACE);
+-        UIManager.put("TabbedPane.underlineColor", ACCENT);
+-        UIManager.put("TabbedPane.selectedLabelColor", TEXT);
+-        UIManager.put("ScrollPane.background", BACKGROUND);
+-        UIManager.put("ScrollBar.track", SURFACE);
+-        UIManager.put("ScrollBar.thumb", BORDER);
+-        UIManager.put("ScrollBar.hoverThumbColor", MUTED);
+-        UIManager.put("ScrollBar.width", 10);
+-        UIManager.put("Component.arc", 10);
+-        UIManager.put("Button.arc", 8);
+-        UIManager.put("TextComponent.arc", 8);
+-        UIManager.put("TextField.padding", new Insets(8, 11, 8, 11));
+-        UIManager.put("Button.font", BODY);
+-        UIManager.put("defaultFont", BODY);
++        UIManager.put("TextField.padding", new Insets(9, 12, 9, 12));
++        UIManager.put("TextArea.background", CANVAS);
++        UIManager.put("TextArea.foreground", TEXT);
++        UIManager.put("TextArea.caretForeground", ACCENT_TEXT);
++        UIManager.put("TextArea.selectionBackground", hex("#33376E"));
++        UIManager.put("TextArea.selectionForeground", TEXT);
++        UIManager.put("ScrollPane.background", CANVAS);
++        UIManager.put("ScrollBar.width", 12);
++        UIManager.put("ScrollBar.thumbArc", 999);
++        UIManager.put("ScrollBar.thumbInsets", new Insets(3, 3, 3, 3));
++        UIManager.put("ScrollBar.showButtons", false);
++        UIManager.put("ScrollBar.track", alpha(SIDEBAR, 0));
++        UIManager.put("ScrollBar.thumb", hex("#30333F"));
++        UIManager.put("ScrollBar.hoverThumbColor", hex("#444859"));
++        UIManager.put("ScrollBar.pressedThumbColor", hex("#585D72"));
++        UIManager.put("ToolTip.background", RAISED);
++        UIManager.put("ToolTip.foreground", TEXT);
++        UIManager.put("ToolTip.border", BorderFactory.createCompoundBorder(
++                BorderFactory.createLineBorder(BORDER), padding(6, 10, 6, 10)));
++        UIManager.put("OptionPane.background", CANVAS);
++        UIManager.put("OptionPane.messageForeground", TEXT);
++        UIManager.put("TitlePane.background", SIDEBAR);
++        UIManager.put("TitlePane.inactiveBackground", SIDEBAR);
++        UIManager.put("TitlePane.foreground", MUTED);
++        UIManager.put("TitlePane.inactiveForeground", FAINT);
++        UIManager.put("TitlePane.buttonHoverBackground", HOVER);
++        UIManager.put("TitlePane.buttonPressedBackground", BORDER);
++    }
++
++    public static Font font(float size, float weight) {
++        Map<TextAttribute, Object> attributes = new HashMap<>();
++        attributes.put(TextAttribute.FAMILY, FAMILY);
++        attributes.put(TextAttribute.SIZE, size);
++        attributes.put(TextAttribute.WEIGHT, weight);
++        return new Font(attributes);
++    }
++
++    public static Color hex(String value) { return Color.decode(value); }
++
++    public static Color alpha(Color color, int alpha) {
++        return new Color(color.getRed(), color.getGreen(), color.getBlue(), alpha);
+     }
+ 
+     public static Border padding(int top, int left, int bottom, int right) {
+@@ -67,6 +124,35 @@ public final class DeepNoteTheme {
+     }
+ 
+     public static Border divider(int top, int left, int bottom, int right) {
+-        return new MatteBorder(top, left, bottom, right, BORDER);
++        return new MatteBorder(top, left, bottom, right, BORDER_SOFT);
++    }
++
++    public static void smooth(Graphics2D g) {
++        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
++        g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
++        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
++    }
++
++    /**
++     * Uses the optional {@code flatlaf-fonts-inter} artifact when it is on the classpath. It is loaded reflectively so
++     * the project still builds and runs without it.
++     */
++    private static void tryInstallInter() {
++        try {
++            Class.forName("com.formdev.flatlaf.fonts.inter.FlatInterFont").getMethod("install").invoke(null);
++        } catch (ReflectiveOperationException | LinkageError exception) {
++            // Optional dependency: fall back to system fonts below.
++        }
++    }
++
++    private static String resolveFamily() {
++        tryInstallInter();
++        Set<String> available = new HashSet<>(Arrays.asList(
++                GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames()));
++        for (String candidate : new String[]{"Inter", "Segoe UI Variable Text", "Segoe UI", "SF Pro Text",
++                "Helvetica Neue", "Roboto", "Ubuntu"}) {
++            if (available.contains(candidate)) return candidate;
++        }
++        return Font.SANS_SERIF;
+     }
+ }
+diff --git a/src/main/java/com/deepnote/ui/IconBadge.java b/src/main/java/com/deepnote/ui/IconBadge.java
+new file mode 100644
+index 0000000..58fe0a0
+--- /dev/null
++++ b/src/main/java/com/deepnote/ui/IconBadge.java
+@@ -0,0 +1,37 @@
++package com.deepnote.ui;
++
++import javax.swing.*;
++import java.awt.*;
++
++/** Fixed-size rounded tile with a centred icon: the brand mark, the AI avatar and empty-state artwork. */
++public class IconBadge extends JComponent {
++    private final DeepNoteIcon.Kind kind;
++    private final boolean solid;
++    private final int size;
++
++    public IconBadge(DeepNoteIcon.Kind kind, int size, boolean solid) {
++        this.kind = kind;
++        this.size = size;
++        this.solid = solid;
++        Dimension dimension = new Dimension(size, size);
++        setPreferredSize(dimension);
++        setMinimumSize(dimension);
++        setMaximumSize(dimension);
++    }
++
++    @Override protected void paintComponent(Graphics graphics) {
++        Graphics2D g = (Graphics2D) graphics.create();
++        DeepNoteTheme.smooth(g);
++        int arc = Math.round(size * 0.34f);
++        if (solid) {
++            g.setPaint(new GradientPaint(0, 0, DeepNoteTheme.ACCENT, size, size, DeepNoteTheme.VIOLET));
++        } else {
++            g.setColor(DeepNoteTheme.ACCENT_SOFT);
++        }
++        g.fillRoundRect(0, 0, size, size, arc, arc);
++        int iconSize = Math.round(size * 0.56f);
++        Color iconColor = solid ? Color.WHITE : DeepNoteTheme.ACCENT_TEXT;
++        new DeepNoteIcon(kind, iconColor, iconSize).paintIcon(this, g, (size - iconSize) / 2, (size - iconSize) / 2);
++        g.dispose();
++    }
++}
+diff --git a/src/main/java/com/deepnote/ui/MainWindow.java b/src/main/java/com/deepnote/ui/MainWindow.java
+index 27f3cfe..c1231ce 100644
+--- a/src/main/java/com/deepnote/ui/MainWindow.java
++++ b/src/main/java/com/deepnote/ui/MainWindow.java
+@@ -13,401 +13,727 @@ import javax.swing.*;
+ import javax.swing.event.DocumentEvent;
+ import javax.swing.event.DocumentListener;
+ import java.awt.*;
++import java.awt.event.ComponentAdapter;
++import java.awt.event.ComponentEvent;
++import java.awt.event.InputEvent;
++import java.awt.event.KeyEvent;
++import java.awt.event.MouseAdapter;
++import java.awt.event.MouseEvent;
++import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
+ import java.time.Duration;
++import java.util.ArrayList;
++import java.util.Comparator;
+ import java.util.HashMap;
+ import java.util.List;
+ import java.util.Map;
++import java.util.UUID;
+ 
+-/** Main DeepNote workspace and desktop shell. */
++/** Main DeepNote workspace: sidebar, tabbed writing surface, and the optional AI panel. */
+ public class MainWindow extends JFrame {
++    private static final int MOD = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
++    private static final String MOD_LABEL = MOD == InputEvent.META_DOWN_MASK ? "⌘" : "Ctrl";
++    private static final int SIDEBAR_WIDTH = 288;
++    private static final int ASSISTANT_WIDTH = 392;
++    private static final int READING_WIDTH = 760;
++
+     private final NoteService noteService;
+     private final LocalSearchService searchService = new LocalSearchService();
+     private final AIAssistantService assistantService;
++    private final String chatModelName;
+     private final DefaultListModel<Note> noteListModel = new DefaultListModel<>();
+-    private final JList<Note> noteList = new JList<>(noteListModel);
+-    private final JTabbedPane tabs = new JTabbedPane();
+-    private final Map<String, EditorTab> openTabs = new HashMap<>();
++    private final JList<Note> noteList = new JList<>(noteListModel) {
++        @Override protected void paintComponent(Graphics graphics) {
++            super.paintComponent(graphics);
++            if (getModel().getSize() > 0) return;
++            Graphics2D g = (Graphics2D) graphics.create();
++            DeepNoteTheme.smooth(g);
++            g.setFont(DeepNoteTheme.SMALL);
++            g.setColor(DeepNoteTheme.FAINT);
++            String message = searchField.getText().isBlank() ? "No notes yet" : "No matching notes";
++            int width = g.getFontMetrics().stringWidth(message);
++            g.drawString(message, (getWidth() - width) / 2, 40);
++            g.dispose();
++        }
++    };
+     private final JTextField searchField = new JTextField();
+-    private final JPanel workspaceArea = new JPanel(new CardLayout());
+-    private final JPanel homePanel = new JPanel(new BorderLayout());
+     private final JLabel noteCountLabel = new JLabel();
++    private final JPanel contentCards = new JPanel(new CardLayout());
++    private final JPanel tabStrip = new JPanel();
++    private final JPanel editorStack = new JPanel(new CardLayout());
++    private final JPanel homePanel = new JPanel(new GridBagLayout());
++    private final List<EditorTab> tabOrder = new ArrayList<>();
++    private final Map<String, EditorTab> openTabs = new HashMap<>();
++    private JPanel navigation;
++    private EditorTab selectedTab;
++    private boolean syncingSelection;
++    private int hoverIndex = -1;
+ 
+     public MainWindow(AppConfig config) {
+         super("DeepNote");
++        chatModelName = config.chatModelName();
+         noteService = new NoteService(config.notesDirectory());
+         assistantService = new AIAssistantService(
+                 new ContextManager(config.maxRecentChatTurns(), config.contextCharacterBudget()),
+-                new OllamaChatModelClient(config.ollamaBaseUrl(), config.chatModelName(), Duration.ofSeconds(config.requestTimeoutSeconds())));
++                new OllamaChatModelClient(config.ollamaBaseUrl(), config.chatModelName(),
++                        Duration.ofSeconds(config.requestTimeoutSeconds())));
+         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
+-        setMinimumSize(new Dimension(980, 640));
+-        setSize(1280, 800);
++        setMinimumSize(new Dimension(1000, 660));
++        setSize(1320, 820);
+         setLocationByPlatform(true);
+         buildUi();
+-        refreshNotes();
++        reloadList();
+         addWindowListener(new java.awt.event.WindowAdapter() {
+             @Override public void windowClosing(java.awt.event.WindowEvent event) { closeApplication(); }
+         });
+     }
+ 
++    // ---------------------------------------------------------------- layout
++
+     private void buildUi() {
+-        getContentPane().setBackground(DeepNoteTheme.BACKGROUND);
++        getContentPane().setBackground(DeepNoteTheme.CANVAS);
++        getRootPane().putClientProperty("JRootPane.titleBarBackground", DeepNoteTheme.SIDEBAR);
++        getRootPane().putClientProperty("JRootPane.titleBarForeground", DeepNoteTheme.MUTED);
+         setLayout(new BorderLayout());
+-        add(buildHeader(), BorderLayout.NORTH);
+-
+-        JPanel navigation = buildNavigation();
+-        tabs.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
+-        tabs.setBorder(null);
+-        tabs.setOpaque(true);
+-        tabs.setBackground(DeepNoteTheme.SURFACE);
+-        workspaceArea.add(buildHomePanel(), "home");
+-        workspaceArea.add(tabs, "tabs");
++        navigation = buildNavigation();
++
++        contentCards.setBackground(DeepNoteTheme.CANVAS);
++        contentCards.add(buildWorkspace(), "workspace");
++        contentCards.add(buildHome(), "home");
+         showHome();
+ 
+-        JSplitPane mainSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, navigation, workspaceArea);
+-        mainSplit.setDividerLocation(270);
+-        mainSplit.setResizeWeight(0);
+-        mainSplit.setBorder(null);
+-        mainSplit.setContinuousLayout(true);
+-        add(mainSplit, BorderLayout.CENTER);
++        add(navigation, BorderLayout.WEST);
++        add(contentCards, BorderLayout.CENTER);
+         add(buildStatusBar(), BorderLayout.SOUTH);
+ 
+         noteList.addListSelectionListener(event -> {
+-            if (!event.getValueIsAdjusting() && noteList.getSelectedValue() != null) openNote(noteList.getSelectedValue());
++            if (event.getValueIsAdjusting() || syncingSelection) return;
++            Note chosen = noteList.getSelectedValue();
++            if (chosen != null) openNote(noteService.readNote(chosen.path()));
+         });
+         searchField.getDocument().addDocumentListener(new DocumentListener() {
+-            @Override public void insertUpdate(DocumentEvent event) { filterNotes(); }
+-            @Override public void removeUpdate(DocumentEvent event) { filterNotes(); }
+-            @Override public void changedUpdate(DocumentEvent event) { filterNotes(); }
++            @Override public void insertUpdate(DocumentEvent event) { reloadList(); }
++            @Override public void removeUpdate(DocumentEvent event) { reloadList(); }
++            @Override public void changedUpdate(DocumentEvent event) { reloadList(); }
+         });
+-        tabs.addChangeListener(event -> updateSelectionFromTab());
+-    }
+-
+-    private JPanel buildHeader() {
+-        JPanel header = new JPanel(new BorderLayout());
+-        header.setBackground(DeepNoteTheme.SURFACE);
+-        header.setBorder(BorderFactory.createCompoundBorder(DeepNoteTheme.divider(0, 0, 1, 0), DeepNoteTheme.padding(12, 18, 12, 18)));
+-        JPanel identity = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+-        identity.setOpaque(false);
+-        JLabel mark = new JLabel("D", SwingConstants.CENTER);
+-        mark.setOpaque(true);
+-        mark.setBackground(DeepNoteTheme.ACCENT);
+-        mark.setForeground(Color.WHITE);
+-        mark.setFont(new Font("Segoe UI", Font.BOLD, 15));
+-        mark.setPreferredSize(new Dimension(30, 30));
+-        JLabel title = new JLabel("DeepNote");
+-        title.setFont(DeepNoteTheme.TITLE);
+-        JLabel subtitle = new JLabel("Private notes, local intelligence");
+-        subtitle.setForeground(DeepNoteTheme.MUTED);
+-        subtitle.setFont(DeepNoteTheme.BODY);
+-        JPanel copy = new JPanel();
+-        copy.setOpaque(false);
+-        copy.setLayout(new BoxLayout(copy, BoxLayout.Y_AXIS));
+-        copy.add(title);
+-        copy.add(subtitle);
+-        identity.add(mark);
+-        identity.add(copy);
+-        header.add(identity, BorderLayout.WEST);
+-        JButton newNote = actionButton("New note", new DeepNoteIcon(DeepNoteIcon.Kind.PLUS, Color.WHITE), ButtonStyle.PRIMARY);
+-        newNote.setToolTipText("Create a new TXT note");
+-        newNote.addActionListener(event -> createNote());
+-        header.add(newNote, BorderLayout.EAST);
+-        return header;
++        installShortcuts();
+     }
+ 
+     private JPanel buildNavigation() {
+-        JPanel navigation = new JPanel(new BorderLayout(0, 14));
+-        navigation.setBackground(DeepNoteTheme.SURFACE);
+-        navigation.setBorder(BorderFactory.createCompoundBorder(DeepNoteTheme.divider(0, 0, 0, 1), DeepNoteTheme.padding(18, 16, 16, 16)));
+-        JPanel searchBlock = new JPanel(new BorderLayout(0, 10));
+-        searchBlock.setOpaque(false);
++        JPanel nav = new JPanel(new BorderLayout(0, 12));
++        nav.setBackground(DeepNoteTheme.SIDEBAR);
++        nav.setBorder(BorderFactory.createCompoundBorder(
++                DeepNoteTheme.divider(0, 0, 0, 1), DeepNoteTheme.padding(14, 12, 12, 12)));
++        nav.setPreferredSize(new Dimension(SIDEBAR_WIDTH, 0));
++
++        JPanel top = new JPanel(new GridBagLayout());
++        top.setOpaque(false);
++        GridBagConstraints c = new GridBagConstraints();
++        c.gridx = 0;
++        c.weightx = 1;
++        c.fill = GridBagConstraints.HORIZONTAL;
++
++        JPanel brand = new JPanel(new BorderLayout(10, 0));
++        brand.setOpaque(false);
++        brand.setBorder(DeepNoteTheme.padding(0, 4, 0, 0));
++        JLabel name = new JLabel("DeepNote");
++        name.setFont(DeepNoteTheme.TITLE_SM);
++        name.setForeground(DeepNoteTheme.TEXT);
++        ModernButton hide = ModernButton.iconOnly(DeepNoteIcon.Kind.SIDEBAR_LEFT,
++                "Hide sidebar (" + MOD_LABEL + "+B)", ModernButton.Variant.GHOST, 18);
++        hide.addActionListener(event -> toggleSidebar());
++        brand.add(new IconBadge(DeepNoteIcon.Kind.SPARK, 30, true), BorderLayout.WEST);
++        brand.add(name, BorderLayout.CENTER);
++        brand.add(hide, BorderLayout.EAST);
++        c.gridy = 0;
++        top.add(brand, c);
++
++        ModernButton newNote = new ModernButton("New note", DeepNoteIcon.Kind.PLUS, ModernButton.Variant.PRIMARY);
++        newNote.setToolTipText("Create a new TXT note (" + MOD_LABEL + "+N)");
++        newNote.addActionListener(event -> createNote());
++        c.gridy = 1;
++        c.insets = new Insets(14, 0, 0, 0);
++        top.add(newNote, c);
++
+         searchField.putClientProperty("JTextField.placeholderText", "Search notes");
+-        searchField.putClientProperty("JTextField.leadingIcon", new DeepNoteIcon(DeepNoteIcon.Kind.SEARCH, DeepNoteTheme.MUTED));
+-        searchField.setToolTipText("Search note titles and content");
+-        searchBlock.add(searchField, BorderLayout.NORTH);
++        searchField.putClientProperty("JTextField.leadingIcon",
++                new DeepNoteIcon(DeepNoteIcon.Kind.SEARCH, DeepNoteTheme.MUTED, 16));
++        searchField.putClientProperty("JTextField.showClearButton", true);
++        searchField.setToolTipText("Search titles and content (" + MOD_LABEL + "+K)");
++        c.gridy = 2;
++        c.insets = new Insets(10, 0, 0, 0);
++        top.add(searchField, c);
++        nav.add(top, BorderLayout.NORTH);
++
++        JPanel library = new JPanel(new BorderLayout(0, 6));
++        library.setOpaque(false);
+         JPanel libraryHeader = new JPanel(new BorderLayout());
+         libraryHeader.setOpaque(false);
+-        JLabel libraryLabel = new JLabel("YOUR NOTES");
++        libraryHeader.setBorder(DeepNoteTheme.padding(6, 6, 0, 6));
++        JLabel libraryLabel = new JLabel("NOTES");
+         libraryLabel.setFont(DeepNoteTheme.LABEL);
+-        libraryLabel.setForeground(DeepNoteTheme.MUTED);
+-        noteCountLabel.setFont(DeepNoteTheme.LABEL);
+-        noteCountLabel.setForeground(DeepNoteTheme.MUTED);
++        libraryLabel.setForeground(DeepNoteTheme.FAINT);
++        noteCountLabel.setFont(DeepNoteTheme.SMALL);
++        noteCountLabel.setForeground(DeepNoteTheme.FAINT);
+         libraryHeader.add(libraryLabel, BorderLayout.WEST);
+         libraryHeader.add(noteCountLabel, BorderLayout.EAST);
+-        searchBlock.add(libraryHeader, BorderLayout.SOUTH);
+-        navigation.add(searchBlock, BorderLayout.NORTH);
+-        noteList.setBackground(DeepNoteTheme.SURFACE);
+-        noteList.setForeground(DeepNoteTheme.TEXT);
++        library.add(libraryHeader, BorderLayout.NORTH);
++
++        noteList.setBackground(DeepNoteTheme.SIDEBAR);
+         noteList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+-        noteList.setFixedCellHeight(58);
++        noteList.setFixedCellHeight(64);
+         noteList.setBorder(null);
+         noteList.setCellRenderer(new NoteCellRenderer());
+-        JScrollPane notesScroll = new JScrollPane(noteList);
+-        notesScroll.setBorder(null);
+-        notesScroll.getViewport().setBackground(DeepNoteTheme.SURFACE);
+-        navigation.add(notesScroll, BorderLayout.CENTER);
+-        JPanel navigationFooter = new JPanel(new BorderLayout(0, 8));
+-        navigationFooter.setOpaque(false);
+-        JLabel hint = new JLabel("Keyword search · TXT source of truth");
+-        hint.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+-        hint.setForeground(DeepNoteTheme.MUTED);
+-        navigationFooter.add(hint, BorderLayout.NORTH);
+-        JButton footerNew = actionButton("New note", new DeepNoteIcon(DeepNoteIcon.Kind.PLUS, DeepNoteTheme.ACCENT_HOVER), ButtonStyle.GHOST);
+-        footerNew.setHorizontalAlignment(SwingConstants.LEFT);
+-        footerNew.addActionListener(event -> createNote());
+-        navigationFooter.add(footerNew, BorderLayout.SOUTH);
+-        navigation.add(navigationFooter, BorderLayout.SOUTH);
+-        navigation.setPreferredSize(new Dimension(270, 0));
+-        return navigation;
+-    }
+-
+-    private JPanel buildHomePanel() {
+-        homePanel.setBackground(DeepNoteTheme.BACKGROUND);
+-        homePanel.setBorder(DeepNoteTheme.padding(50, 64, 50, 64));
+-        JPanel content = new JPanel();
+-        content.setOpaque(false);
+-        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+-        JLabel eyebrow = new JLabel("YOUR PRIVATE WORKSPACE");
+-        eyebrow.setForeground(DeepNoteTheme.ACCENT_HOVER);
+-        eyebrow.setFont(DeepNoteTheme.LABEL);
+-        JLabel heading = new JLabel("Make space for better thinking.");
+-        heading.setForeground(DeepNoteTheme.TEXT);
++        MouseAdapter hover = new MouseAdapter() {
++            @Override public void mouseMoved(MouseEvent event) {
++                int index = noteList.locationToIndex(event.getPoint());
++                Rectangle bounds = index < 0 ? null : noteList.getCellBounds(index, index);
++                setHoverIndex(bounds != null && bounds.contains(event.getPoint()) ? index : -1);
++            }
++
++            @Override public void mouseExited(MouseEvent event) { setHoverIndex(-1); }
++        };
++        noteList.addMouseMotionListener(hover);
++        noteList.addMouseListener(hover);
++        JScrollPane scroll = new JScrollPane(noteList);
++        scroll.setBorder(null);
++        scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
++        scroll.getViewport().setBackground(DeepNoteTheme.SIDEBAR);
++        scroll.setBackground(DeepNoteTheme.SIDEBAR);
++        library.add(scroll, BorderLayout.CENTER);
++        nav.add(library, BorderLayout.CENTER);
++
++        JPanel footer = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
++        footer.setOpaque(false);
++        footer.setBorder(DeepNoteTheme.padding(4, 2, 0, 0));
++        JLabel privacy = new JLabel("Stored locally as .txt files",
++                new DeepNoteIcon(DeepNoteIcon.Kind.LOCK, DeepNoteTheme.FAINT, 14), SwingConstants.LEFT);
++        privacy.setIconTextGap(6);
++        privacy.setFont(DeepNoteTheme.SMALL);
++        privacy.setForeground(DeepNoteTheme.FAINT);
++        footer.add(privacy);
++        nav.add(footer, BorderLayout.SOUTH);
++        return nav;
++    }
++
++    private JPanel buildWorkspace() {
++        JPanel workspace = new JPanel(new BorderLayout());
++        workspace.setBackground(DeepNoteTheme.CANVAS);
++        tabStrip.setOpaque(false);
++        tabStrip.setLayout(new BoxLayout(tabStrip, BoxLayout.X_AXIS));
++        tabStrip.setBorder(DeepNoteTheme.padding(8, 12, 8, 12));
++        JScrollPane tabScroll = new JScrollPane(tabStrip, ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER,
++                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED);
++        tabScroll.setBorder(DeepNoteTheme.divider(0, 0, 1, 0));
++        tabScroll.getViewport().setBackground(DeepNoteTheme.SIDEBAR);
++        tabScroll.setBackground(DeepNoteTheme.SIDEBAR);
++        tabScroll.getHorizontalScrollBar().setPreferredSize(new Dimension(0, 8));
++        editorStack.setBackground(DeepNoteTheme.CANVAS);
++        workspace.add(tabScroll, BorderLayout.NORTH);
++        workspace.add(editorStack, BorderLayout.CENTER);
++        return workspace;
++    }
++
++    private JPanel buildHome() {
++        homePanel.setBackground(DeepNoteTheme.CANVAS);
++        return homePanel;
++    }
++
++    private void rebuildHome(List<Note> notes) {
++        homePanel.removeAll();
++        JPanel column = new JPanel();
++        column.setOpaque(false);
++        column.setLayout(new BoxLayout(column, BoxLayout.Y_AXIS));
++
++        IconBadge mark = new IconBadge(DeepNoteIcon.Kind.SPARK, 52, true);
++        JLabel heading = new JLabel("Good ideas start as plain text.");
+         heading.setFont(DeepNoteTheme.DISPLAY);
+-        JLabel description = new JLabel("Create a plain-text note, keep it portable, and ask your local assistant when you need a second perspective.");
+-        description.setForeground(DeepNoteTheme.MUTED);
+-        description.setFont(DeepNoteTheme.BODY_LARGE);
+-        description.setAlignmentX(Component.LEFT_ALIGNMENT);
+-        content.add(eyebrow);
+-        content.add(Box.createVerticalStrut(10));
+-        content.add(heading);
+-        content.add(Box.createVerticalStrut(12));
+-        content.add(description);
+-        content.add(Box.createVerticalStrut(28));
+-        JButton create = actionButton("Create your first note", new DeepNoteIcon(DeepNoteIcon.Kind.PLUS, Color.WHITE), ButtonStyle.PRIMARY);
+-        create.setAlignmentX(Component.LEFT_ALIGNMENT);
++        heading.setForeground(DeepNoteTheme.TEXT);
++        JLabel copy = new JLabel("<html><div style='width:480px'>Write freely in portable .txt files, then ask a "
++                + "local AI about any note. Nothing ever leaves your machine.</div></html>");
++        copy.setFont(DeepNoteTheme.CHAT);
++        copy.setForeground(DeepNoteTheme.MUTED);
++        ModernButton create = new ModernButton("New note", DeepNoteIcon.Kind.PLUS, ModernButton.Variant.PRIMARY);
+         create.addActionListener(event -> createNote());
+-        content.add(create);
+-        JPanel wrapper = new JPanel(new BorderLayout());
+-        wrapper.setOpaque(false);
+-        wrapper.add(content, BorderLayout.NORTH);
+-        homePanel.add(wrapper, BorderLayout.NORTH);
+-        return homePanel;
++        JPanel hints = new JPanel();
++        hints.setOpaque(false);
++        hints.setLayout(new BoxLayout(hints, BoxLayout.X_AXIS));
++        String[][] shortcuts = {{MOD_LABEL + " N", "New note"}, {MOD_LABEL + " K", "Search"},
++                {MOD_LABEL + " J", "Ask AI"}, {MOD_LABEL + " B", "Sidebar"}};
++        for (String[] shortcut : shortcuts) {
++            hints.add(shortcutHint(shortcut[0], shortcut[1]));
++            hints.add(Box.createHorizontalStrut(18));
++        }
++        for (JComponent component : new JComponent[]{mark, heading, copy, create, hints}) {
++            component.setAlignmentX(Component.LEFT_ALIGNMENT);
++        }
++        column.add(mark);
++        column.add(Box.createVerticalStrut(22));
++        column.add(heading);
++        column.add(Box.createVerticalStrut(12));
++        column.add(copy);
++        column.add(Box.createVerticalStrut(26));
++        column.add(create);
++        column.add(Box.createVerticalStrut(18));
++        column.add(hints);
++
++        if (!notes.isEmpty()) {
++            JLabel recent = new JLabel("RECENT NOTES");
++            recent.setFont(DeepNoteTheme.LABEL);
++            recent.setForeground(DeepNoteTheme.FAINT);
++            recent.setAlignmentX(Component.LEFT_ALIGNMENT);
++            JPanel grid = new JPanel(new GridLayout(0, 2, 12, 12));
++            grid.setOpaque(false);
++            grid.setAlignmentX(Component.LEFT_ALIGNMENT);
++            notes.stream().sorted(Comparator.comparingLong((Note note) -> lastModified(note.path())).reversed())
++                    .limit(4).forEach(note -> grid.add(recentCard(note)));
++            column.add(Box.createVerticalStrut(44));
++            column.add(recent);
++            column.add(Box.createVerticalStrut(12));
++            column.add(grid);
++        }
++        homePanel.add(column);
++        homePanel.revalidate();
++        homePanel.repaint();
++    }
++
++    private JComponent shortcutHint(String keys, String label) {
++        JPanel hint = new JPanel();
++        hint.setOpaque(false);
++        hint.setLayout(new BoxLayout(hint, BoxLayout.X_AXIS));
++        RoundedPanel keycap = new RoundedPanel(new BorderLayout(), 8, DeepNoteTheme.RAISED, DeepNoteTheme.BORDER);
++        keycap.setBorder(DeepNoteTheme.padding(3, 7, 3, 7));
++        JLabel keyText = new JLabel(keys);
++        keyText.setFont(DeepNoteTheme.SMALL_MEDIUM);
++        keyText.setForeground(DeepNoteTheme.TEXT_SECONDARY);
++        keycap.add(keyText);
++        keycap.setMaximumSize(keycap.getPreferredSize());
++        JLabel text = new JLabel(label);
++        text.setFont(DeepNoteTheme.SMALL);
++        text.setForeground(DeepNoteTheme.MUTED);
++        hint.add(keycap);
++        hint.add(Box.createHorizontalStrut(8));
++        hint.add(text);
++        return hint;
++    }
++
++    private JComponent recentCard(Note note) {
++        RoundedPanel card = new RoundedPanel(new BorderLayout(0, 6), 16, DeepNoteTheme.RAISED,
++                DeepNoteTheme.BORDER_SOFT);
++        card.setBorder(DeepNoteTheme.padding(16, 18, 16, 18));
++        card.setPreferredSize(new Dimension(300, 84));
++        card.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
++        JLabel title = new JLabel(note.title());
++        title.setFont(DeepNoteTheme.BODY_MEDIUM);
++        title.setForeground(DeepNoteTheme.TEXT);
++        JLabel preview = new JLabel(previewOf(note.content()));
++        preview.setFont(DeepNoteTheme.SMALL);
++        preview.setForeground(DeepNoteTheme.MUTED);
++        card.add(title, BorderLayout.NORTH);
++        card.add(preview, BorderLayout.CENTER);
++        card.addMouseListener(new MouseAdapter() {
++            @Override public void mouseEntered(MouseEvent event) { card.setStroke(DeepNoteTheme.ACCENT); }
++
++            @Override public void mouseExited(MouseEvent event) {
++                if (!card.contains(event.getPoint())) card.setStroke(DeepNoteTheme.BORDER_SOFT);
++            }
++
++            @Override public void mouseClicked(MouseEvent event) { openNote(noteService.readNote(note.path())); }
++        });
++        return card;
+     }
+ 
+     private JPanel buildStatusBar() {
+         JPanel status = new JPanel(new BorderLayout());
+-        status.setBackground(DeepNoteTheme.BACKGROUND);
+-        status.setBorder(DeepNoteTheme.padding(8, 18, 8, 18));
+-        JLabel left = new JLabel("LOCAL WORKSPACE");
+-        left.setFont(DeepNoteTheme.LABEL);
++        status.setBackground(DeepNoteTheme.SIDEBAR);
++        status.setBorder(BorderFactory.createCompoundBorder(
++                DeepNoteTheme.divider(1, 0, 0, 0), DeepNoteTheme.padding(6, 16, 6, 16)));
++        JLabel left = new JLabel("Local workspace", dot(DeepNoteTheme.SUCCESS, 8), SwingConstants.LEFT);
++        left.setIconTextGap(8);
++        left.setFont(DeepNoteTheme.SMALL);
+         left.setForeground(DeepNoteTheme.MUTED);
+-        JLabel right = new JLabel("Ollama assistant · offline by default");
+-        right.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+-        right.setForeground(DeepNoteTheme.MUTED);
++        JLabel right = new JLabel("Ollama · " + chatModelName);
++        right.setFont(DeepNoteTheme.SMALL);
++        right.setForeground(DeepNoteTheme.FAINT);
+         status.add(left, BorderLayout.WEST);
+         status.add(right, BorderLayout.EAST);
+         return status;
+     }
+ 
+-    private void refreshNotes() {
+-        List<Note> notes = noteService.listNotes();
+-        noteListModel.clear();
+-        notes.forEach(noteListModel::addElement);
+-        noteCountLabel.setText(notes.size() + (notes.size() == 1 ? " note" : " notes"));
+-        if (tabs.getTabCount() == 0) showHome();
++    // ---------------------------------------------------------------- shortcuts
++
++    private void installShortcuts() {
++        bind(KeyEvent.VK_N, "newNote", this::createNote);
++        bind(KeyEvent.VK_S, "saveNote", this::saveCurrent);
++        bind(KeyEvent.VK_K, "focusSearch", this::focusSearch);
++        bind(KeyEvent.VK_J, "toggleAssistant", this::toggleCurrentAssistant);
++        bind(KeyEvent.VK_W, "closeTab", () -> { if (selectedTab != null) closeTab(selectedTab); });
++        bind(KeyEvent.VK_B, "toggleSidebar", this::toggleSidebar);
++    }
++
++    private void bind(int keyCode, String name, Runnable action) {
++        getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(keyCode, MOD), name);
++        getRootPane().getActionMap().put(name, new AbstractAction() {
++            @Override public void actionPerformed(java.awt.event.ActionEvent event) { action.run(); }
++        });
++    }
++
++    private void toggleSidebar() {
++        navigation.setVisible(!navigation.isVisible());
++        getContentPane().revalidate();
++        getContentPane().repaint();
++    }
++
++    private void focusSearch() {
++        if (!navigation.isVisible()) toggleSidebar();
++        searchField.requestFocusInWindow();
++        searchField.selectAll();
++    }
++
++    private void saveCurrent() { if (selectedTab != null) selectedTab.save(); }
++
++    private void toggleCurrentAssistant() {
++        if (selectedTab != null) selectedTab.toggleAssistant(!selectedTab.assistantHost.isVisible());
++    }
++
++    // ---------------------------------------------------------------- note list
++
++    private void reloadList() {
++        List<Note> all = noteService.listNotes();
++        String query = searchField.getText();
++        List<Note> shown = searchService.search(all, query);
++        syncingSelection = true;
++        try {
++            noteListModel.clear();
++            shown.forEach(noteListModel::addElement);
++        } finally {
++            syncingSelection = false;
++        }
++        boolean filtering = query != null && !query.isBlank();
++        noteCountLabel.setText(shown.size() + (filtering ? (shown.size() == 1 ? " result" : " results")
++                : (shown.size() == 1 ? " note" : " notes")));
++        syncListSelection();
++        rebuildHome(all);
++    }
++
++    private void syncListSelection() {
++        syncingSelection = true;
++        try {
++            noteList.clearSelection();
++            if (selectedTab == null) return;
++            for (int i = 0; i < noteListModel.size(); i++) {
++                if (noteListModel.get(i).path().equals(selectedTab.note.path())) {
++                    noteList.setSelectedIndex(i);
++                    noteList.ensureIndexIsVisible(i);
++                    return;
++                }
++            }
++        } finally {
++            syncingSelection = false;
++        }
++    }
++
++    private void setHoverIndex(int index) {
++        if (index == hoverIndex) return;
++        hoverIndex = index;
++        noteList.repaint();
+     }
+ 
+-    private void filterNotes() {
+-        List<Note> results = searchService.search(noteService.listNotes(), searchField.getText());
+-        noteListModel.clear();
+-        results.forEach(noteListModel::addElement);
+-        noteCountLabel.setText(results.size() + (results.size() == 1 ? " result" : " results"));
++    // ---------------------------------------------------------------- tabs
++
++    private void showHome() {
++        navigation.setVisible(true);
++        ((CardLayout) contentCards.getLayout()).show(contentCards, "home");
++        syncListSelection();
+     }
+ 
+-    private void showHome() { ((CardLayout) workspaceArea.getLayout()).show(workspaceArea, "home"); }
+-    private void showTabs() { ((CardLayout) workspaceArea.getLayout()).show(workspaceArea, "tabs"); }
++    private void showWorkspace() { ((CardLayout) contentCards.getLayout()).show(contentCards, "workspace"); }
+ 
+     private void createNote() {
+-        String title = JOptionPane.showInputDialog(this, "Give your note a title:", "New note", JOptionPane.PLAIN_MESSAGE);
++        String title = JOptionPane.showInputDialog(this, "Give your note a title:", "New note",
++                JOptionPane.PLAIN_MESSAGE);
+         if (title == null) return;
+         try {
+             Note note = noteService.createNote(title);
+-            refreshNotes();
++            reloadList();
+             openNote(note);
+         } catch (NoteStorageException exception) { showError(exception.getMessage()); }
+     }
+ 
+     private void openNote(Note note) {
+         EditorTab existing = openTabs.get(note.path().toString());
+-        if (existing != null) { tabs.setSelectedComponent(existing); showTabs(); return; }
+-        EditorTab editorTab = new EditorTab(note);
+-        openTabs.put(note.path().toString(), editorTab);
+-        tabs.addTab(note.title(), editorTab);
+-        tabs.setTabComponentAt(tabs.indexOfComponent(editorTab), tabHeader(editorTab));
+-        tabs.setSelectedComponent(editorTab);
+-        showTabs();
+-    }
+-
+-    private JPanel tabHeader(EditorTab editorTab) {
+-        JPanel header = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+-        header.setOpaque(false);
+-        editorTab.tabTitle = new JLabel(editorTab.note.title());
+-        editorTab.tabTitle.setForeground(DeepNoteTheme.TEXT);
+-        editorTab.tabTitle.setFont(DeepNoteTheme.BODY);
+-        JLabel document = new JLabel(new DeepNoteIcon(DeepNoteIcon.Kind.DOCUMENT, DeepNoteTheme.MUTED));
+-        JButton close = iconButton(new DeepNoteIcon(DeepNoteIcon.Kind.CLOSE, DeepNoteTheme.MUTED), "Close note");
+-        close.addActionListener(event -> closeTab(editorTab));
+-        header.add(document);
+-        header.add(editorTab.tabTitle);
+-        header.add(close);
+-        return header;
++        if (existing != null) {
++            selectTab(existing);
++            return;
++        }
++        EditorTab tab = new EditorTab(note);
++        openTabs.put(note.path().toString(), tab);
++        tabOrder.add(tab);
++        tabStrip.add(tab.chipHolder);
++        editorStack.add(tab, tab.id);
++        selectTab(tab);
++    }
++
++    private void selectTab(EditorTab tab) {
++        selectedTab = tab;
++        ((CardLayout) editorStack.getLayout()).show(editorStack, tab.id);
++        tabOrder.forEach(other -> other.chip.setSelectedState(other == tab));
++        showWorkspace();
++        syncListSelection();
++        tabStrip.revalidate();
++        tabStrip.repaint();
++        SwingUtilities.invokeLater(() -> {
++            tab.chipHolder.scrollRectToVisible(new Rectangle(0, 0, tab.chipHolder.getWidth(),
++                    tab.chipHolder.getHeight()));
++            tab.editor.requestFocusInWindow();
++        });
+     }
+ 
+     private void closeTab(EditorTab tab) {
+-        if (tab.isDirty()) {
+-            int choice = JOptionPane.showConfirmDialog(this, "Save changes to “" + tab.note.title() + "” before closing?", "Unsaved changes", JOptionPane.YES_NO_CANCEL_OPTION);
+-            if (choice == JOptionPane.CANCEL_OPTION) return;
++        if (tab.dirty) {
++            selectTab(tab);
++            int choice = JOptionPane.showConfirmDialog(this,
++                    "Save changes to “" + tab.note.title() + "” before closing?", "Unsaved changes",
++                    JOptionPane.YES_NO_CANCEL_OPTION);
++            if (choice == JOptionPane.CANCEL_OPTION || choice == JOptionPane.CLOSED_OPTION) return;
+             if (choice == JOptionPane.YES_OPTION && !tab.save()) return;
+         }
+-        openTabs.remove(tab.note.path().toString());
+-        tabs.remove(tab);
+-        if (tabs.getTabCount() == 0) showHome();
++        removeTab(tab);
+     }
+ 
+-    private void updateSelectionFromTab() {
+-        Component component = tabs.getSelectedComponent();
+-        if (component instanceof EditorTab tab) noteList.setSelectedValue(noteService.readNote(tab.note.path()), true);
++    private void removeTab(EditorTab tab) {
++        int index = tabOrder.indexOf(tab);
++        tabOrder.remove(tab);
++        openTabs.remove(tab.note.path().toString());
++        tabStrip.remove(tab.chipHolder);
++        editorStack.remove(tab);
++        tabStrip.revalidate();
++        tabStrip.repaint();
++        if (selectedTab != tab) return;
++        selectedTab = null;
++        if (tabOrder.isEmpty()) showHome();
++        else selectTab(tabOrder.get(Math.min(index, tabOrder.size() - 1)));
+     }
+ 
+     private void closeApplication() {
+-        for (EditorTab tab : List.copyOf(openTabs.values())) {
+-            if (!tab.isDirty()) continue;
+-            int choice = JOptionPane.showConfirmDialog(this, "Save changes to “" + tab.note.title() + "” before closing?", "Unsaved changes", JOptionPane.YES_NO_CANCEL_OPTION);
+-            if (choice == JOptionPane.CANCEL_OPTION) return;
++        for (EditorTab tab : List.copyOf(tabOrder)) {
++            if (!tab.dirty) continue;
++            selectTab(tab);
++            int choice = JOptionPane.showConfirmDialog(this,
++                    "Save changes to “" + tab.note.title() + "” before closing?", "Unsaved changes",
++                    JOptionPane.YES_NO_CANCEL_OPTION);
++            if (choice == JOptionPane.CANCEL_OPTION || choice == JOptionPane.CLOSED_OPTION) return;
+             if (choice == JOptionPane.YES_OPTION && !tab.save()) return;
+         }
+         dispose();
+     }
+ 
+-    private void showError(String message) { JOptionPane.showMessageDialog(this, message, "DeepNote", JOptionPane.ERROR_MESSAGE); }
+-
+-    private JButton actionButton(String text, Icon icon, ButtonStyle style) {
+-        JButton button = new JButton(text, icon);
+-        button.setFont(DeepNoteTheme.BODY);
+-        button.setIconTextGap(8);
+-        button.setFocusPainted(false);
+-        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+-        button.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
+-        button.setMargin(new Insets(0, 0, 0, 0));
+-        button.putClientProperty("JButton.buttonType", "roundRect");
+-        if (style == ButtonStyle.PRIMARY) {
+-            button.setBackground(DeepNoteTheme.ACCENT);
+-            button.setForeground(Color.WHITE);
+-        } else if (style == ButtonStyle.DANGER) {
+-            button.setBackground(DeepNoteTheme.SURFACE);
+-            button.setForeground(DeepNoteTheme.DANGER);
+-        } else {
+-            button.setBackground(DeepNoteTheme.ELEVATED);
+-            button.setForeground(DeepNoteTheme.TEXT);
++    private void showError(String message) {
++        JOptionPane.showMessageDialog(this, message, "DeepNote", JOptionPane.ERROR_MESSAGE);
++    }
++
++    // ---------------------------------------------------------------- helpers
++
++    private static Icon dot(Color color, int diameter) {
++        return new Icon() {
++            @Override public void paintIcon(Component component, Graphics graphics, int x, int y) {
++                Graphics2D g = (Graphics2D) graphics.create();
++                DeepNoteTheme.smooth(g);
++                g.setColor(color);
++                g.fillOval(x, y, diameter, diameter);
++                g.dispose();
++            }
++
++            @Override public int getIconWidth() { return diameter; }
++            @Override public int getIconHeight() { return diameter; }
++        };
++    }
++
++    private static String previewOf(String content) {
++        for (String line : content.split("\\R", 40)) {
++            String trimmed = line.trim();
++            if (trimmed.isEmpty()) continue;
++            return trimmed.length() > 58 ? trimmed.substring(0, 58) + "…" : trimmed;
++        }
++        return "Empty note";
++    }
++
++    private static long lastModified(Path path) {
++        try {
++            return Files.getLastModifiedTime(path).toMillis();
++        } catch (IOException exception) {
++            return 0L; // A file that cannot be inspected simply sorts last.
+         }
+-        return button;
+     }
+ 
+-    private JButton iconButton(Icon icon, String tooltip) {
+-        JButton button = new JButton(icon);
+-        button.setToolTipText(tooltip);
+-        button.setFocusPainted(false);
+-        button.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
+-        button.setContentAreaFilled(false);
+-        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+-        return button;
++    private static JPanel hbox(int gap, Component... items) {
++        JPanel box = new JPanel();
++        box.setOpaque(false);
++        box.setLayout(new BoxLayout(box, BoxLayout.X_AXIS));
++        for (int i = 0; i < items.length; i++) {
++            if (i > 0) box.add(Box.createHorizontalStrut(gap));
++            box.add(items[i]);
++        }
++        return box;
+     }
+ 
+-    private enum ButtonStyle { PRIMARY, GHOST, DANGER }
++    // ---------------------------------------------------------------- note list cell
+ 
+-    private static final class NoteCellRenderer extends JPanel implements ListCellRenderer<Note> {
++    private final class NoteCellRenderer extends JPanel implements ListCellRenderer<Note> {
+         private final JLabel title = new JLabel();
+-        private final JLabel metadata = new JLabel("TXT note");
++        private final JLabel preview = new JLabel();
++        private boolean selected;
++        private boolean hovered;
+ 
+         NoteCellRenderer() {
++            setOpaque(false);
+             setLayout(new BorderLayout(0, 3));
+-            setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
+-            title.setFont(DeepNoteTheme.BODY);
+-            metadata.setFont(new Font("Segoe UI", Font.PLAIN, 11));
++            setBorder(DeepNoteTheme.padding(12, 14, 12, 14));
++            title.setFont(DeepNoteTheme.BODY_MEDIUM);
++            preview.setFont(DeepNoteTheme.SMALL);
+             add(title, BorderLayout.CENTER);
+-            add(metadata, BorderLayout.SOUTH);
++            add(preview, BorderLayout.SOUTH);
+         }
+ 
+-        @Override public Component getListCellRendererComponent(JList<? extends Note> list, Note note, int index, boolean selected, boolean focused) {
+-            setOpaque(true);
+-            setBackground(selected ? Color.decode("#292849") : DeepNoteTheme.SURFACE);
++        @Override public Component getListCellRendererComponent(JList<? extends Note> list, Note note, int index,
++                                                                boolean isSelected, boolean focused) {
++            selected = isSelected;
++            hovered = index == hoverIndex;
+             title.setText(note.title());
+-            title.setForeground(selected ? Color.WHITE : DeepNoteTheme.TEXT);
+-            metadata.setForeground(selected ? Color.decode("#C5C3FF") : DeepNoteTheme.MUTED);
++            title.setForeground(DeepNoteTheme.TEXT);
++            preview.setText(previewOf(note.content()));
++            preview.setForeground(isSelected ? DeepNoteTheme.ACCENT_TEXT : DeepNoteTheme.MUTED);
+             return this;
+         }
++
++        @Override protected void paintComponent(Graphics graphics) {
++            Graphics2D g = (Graphics2D) graphics.create();
++            DeepNoteTheme.smooth(g);
++            if (selected || hovered) {
++                g.setColor(selected ? DeepNoteTheme.ACCENT_SOFT : DeepNoteTheme.RAISED);
++                g.fillRoundRect(0, 2, getWidth(), getHeight() - 4, 14, 14);
++            }
++            g.dispose();
++            super.paintComponent(graphics);
++        }
++    }
++
++    // ---------------------------------------------------------------- tab chip
++
++    private final class TabChip extends RoundedPanel {
++        private final EditorTab tab;
++        private final JLabel title = new JLabel();
++        private final JLabel dirtyDot = new JLabel(dot(DeepNoteTheme.WARNING, 7));
++        private boolean selected;
++        private boolean hovered;
++
++        TabChip(EditorTab tab) {
++            super(new BorderLayout(8, 0), 12, null, null);
++            this.tab = tab;
++            setBorder(DeepNoteTheme.padding(5, 12, 5, 6));
++            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
++            title.setFont(DeepNoteTheme.BODY_MEDIUM);
++            dirtyDot.setVisible(false);
++            ModernButton close = ModernButton.iconOnly(DeepNoteIcon.Kind.CLOSE, "Close (" + MOD_LABEL + "+W)",
++                    ModernButton.Variant.GHOST, 12);
++            close.addActionListener(event -> closeTab(tab));
++            JLabel document = new JLabel(new DeepNoteIcon(DeepNoteIcon.Kind.DOCUMENT, DeepNoteTheme.MUTED, 15));
++            add(document, BorderLayout.WEST);
++            add(title, BorderLayout.CENTER);
++            add(hbox(4, dirtyDot, close), BorderLayout.EAST);
++            addMouseListener(new MouseAdapter() {
++                @Override public void mouseEntered(MouseEvent event) { hovered = true; restyle(); }
++
++                @Override public void mouseExited(MouseEvent event) {
++                    if (contains(event.getPoint())) return;
++                    hovered = false;
++                    restyle();
++                }
++
++                @Override public void mouseClicked(MouseEvent event) { selectTab(tab); }
++            });
++            setTitle(tab.note.title());
++            restyle();
++        }
++
++        void setTitle(String text) { title.setText(text); }
++        void setDirty(boolean dirty) { dirtyDot.setVisible(dirty); }
++
++        void setSelectedState(boolean value) {
++            selected = value;
++            restyle();
++        }
++
++        private void restyle() {
++            setFill(selected ? DeepNoteTheme.RAISED : hovered ? DeepNoteTheme.HOVER : null);
++            setStroke(selected ? DeepNoteTheme.BORDER : null);
++            title.setForeground(selected ? DeepNoteTheme.TEXT : DeepNoteTheme.MUTED);
++        }
+     }
+ 
++    // ---------------------------------------------------------------- editor tab
++
+     private final class EditorTab extends JPanel {
+-        private Note note;
+-        private final JTextArea editor = new JTextArea();
+-        private final JPanel assistantHost = new JPanel(new BorderLayout());
+-        private final AIAssistantPanel assistantPanel;
+-        private JLabel tabTitle;
+-        private boolean dirty;
++        final String id = UUID.randomUUID().toString();
++        final JTextArea editor;
++        final JPanel assistantHost = new JPanel(new BorderLayout());
++        final AIAssistantPanel assistantPanel;
++        final TabChip chip;
++        final JPanel chipHolder = new JPanel(new BorderLayout()) {
++            @Override public Dimension getMaximumSize() { return getPreferredSize(); }
++        };
++        private final ScrollableColumn column = new ScrollableColumn(new BorderLayout(0, 22), true);
++        private final JLabel titleLabel = new JLabel();
++        private final JLabel metaLabel = new JLabel();
++        private final JLabel statusLabel = new JLabel();
++        private final ModernButton askButton = new ModernButton("Ask AI", DeepNoteIcon.Kind.SPARK,
++                ModernButton.Variant.SOFT);
++        Note note;
++        boolean dirty;
+ 
+         EditorTab(Note note) {
+             this.note = note;
+             setLayout(new BorderLayout());
+-            setBackground(DeepNoteTheme.BACKGROUND);
+-            editor.setText(note.content());
++            setBackground(DeepNoteTheme.CANVAS);
++            chip = new TabChip(this);
++            chipHolder.setOpaque(false);
++            chipHolder.setBorder(DeepNoteTheme.padding(0, 0, 0, 6));
++            chipHolder.add(chip, BorderLayout.CENTER);
++
++            editor = new JTextArea(note.content()) {
++                @Override protected void paintComponent(Graphics graphics) {
++                    super.paintComponent(graphics);
++                    if (getDocument().getLength() > 0) return;
++                    Graphics2D g = (Graphics2D) graphics.create();
++                    DeepNoteTheme.smooth(g);
++                    g.setColor(DeepNoteTheme.FAINT);
++                    g.setFont(getFont());
++                    g.drawString("Start writing…", getInsets().left, getInsets().top + g.getFontMetrics().getAscent());
++                    g.dispose();
++                }
++            };
+             editor.setLineWrap(true);
+             editor.setWrapStyleWord(true);
+-            editor.setFont(DeepNoteTheme.BODY_LARGE);
++            editor.setTabSize(4);
++            editor.setFont(DeepNoteTheme.EDITOR);
+             editor.setForeground(DeepNoteTheme.TEXT);
+-            editor.setBackground(DeepNoteTheme.BACKGROUND);
+-            editor.setCaretColor(DeepNoteTheme.ACCENT_HOVER);
+-            editor.setSelectionColor(Color.decode("#3A3B70"));
+-            editor.setSelectedTextColor(DeepNoteTheme.TEXT);
+-            editor.setMargin(new Insets(26, 34, 40, 34));
++            editor.setBackground(DeepNoteTheme.CANVAS);
++            editor.setCaretColor(DeepNoteTheme.ACCENT_TEXT);
++            editor.setBorder(null);
++
+             assistantPanel = new AIAssistantPanel(assistantService, editor::getText, () -> toggleAssistant(false));
+             assistantPanel.setNote(note.title());
+             assistantHost.add(assistantPanel, BorderLayout.CENTER);
+-            assistantHost.setPreferredSize(new Dimension(360, 0));
+-            assistantHost.setVisible(false);
++            assistantHost.setPreferredSize(new Dimension(ASSISTANT_WIDTH, 0));
+             assistantHost.setBorder(DeepNoteTheme.divider(0, 1, 0, 0));
++            assistantHost.setVisible(false);
+ 
+-            JPanel toolbar = new JPanel(new BorderLayout(12, 0));
+-            toolbar.setBackground(DeepNoteTheme.SURFACE);
+-            toolbar.setBorder(BorderFactory.createCompoundBorder(DeepNoteTheme.divider(0, 0, 1, 0), DeepNoteTheme.padding(10, 18, 10, 18)));
+-            JPanel descriptor = new JPanel();
+-            descriptor.setOpaque(false);
+-            descriptor.setLayout(new BoxLayout(descriptor, BoxLayout.Y_AXIS));
+-            JLabel noteType = new JLabel("PLAIN TEXT NOTE");
+-            noteType.setFont(DeepNoteTheme.LABEL);
+-            noteType.setForeground(DeepNoteTheme.MUTED);
+-            JLabel notePath = new JLabel(note.title());
+-            notePath.setFont(DeepNoteTheme.BODY);
+-            notePath.setForeground(DeepNoteTheme.TEXT);
+-            descriptor.add(noteType);
+-            descriptor.add(notePath);
+-            toolbar.add(descriptor, BorderLayout.WEST);
+-            JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+-            JButton save = actionButton("Save", new DeepNoteIcon(DeepNoteIcon.Kind.SAVE, DeepNoteTheme.TEXT), ButtonStyle.GHOST);
+-            JButton rename = actionButton("Rename", new DeepNoteIcon(DeepNoteIcon.Kind.EDIT, DeepNoteTheme.TEXT), ButtonStyle.GHOST);
+-            JButton delete = actionButton("Delete", new DeepNoteIcon(DeepNoteIcon.Kind.TRASH, DeepNoteTheme.DANGER), ButtonStyle.DANGER);
+-            JButton ask = actionButton("Ask AI", new DeepNoteIcon(DeepNoteIcon.Kind.SPARK, Color.WHITE), ButtonStyle.PRIMARY);
+-            save.addActionListener(event -> save());
+-            rename.addActionListener(event -> rename());
+-            delete.addActionListener(event -> delete());
+-            ask.addActionListener(event -> toggleAssistant(!assistantHost.isVisible()));
+-            actions.add(save); actions.add(rename); actions.add(delete); actions.add(ask);
+-            toolbar.add(actions, BorderLayout.EAST);
+-            JScrollPane editorScroll = new JScrollPane(editor);
+-            editorScroll.setBorder(null);
+-            editorScroll.getViewport().setBackground(DeepNoteTheme.BACKGROUND);
+-            add(toolbar, BorderLayout.NORTH);
+-            add(editorScroll, BorderLayout.CENTER);
++            add(buildToolbar(), BorderLayout.NORTH);
++            add(buildDocument(), BorderLayout.CENTER);
+             add(assistantHost, BorderLayout.EAST);
++            refreshHeader();
++            refreshStatus();
+             editor.getDocument().addDocumentListener(new DocumentListener() {
+                 @Override public void insertUpdate(DocumentEvent event) { markDirty(); }
+                 @Override public void removeUpdate(DocumentEvent event) { markDirty(); }
+@@ -415,19 +741,112 @@ public class MainWindow extends JFrame {
+             });
+         }
+ 
+-        private void toggleAssistant(boolean show) {
++        private JPanel buildToolbar() {
++            JPanel toolbar = new JPanel(new BorderLayout(12, 0));
++            toolbar.setBackground(DeepNoteTheme.CANVAS);
++            toolbar.setBorder(DeepNoteTheme.padding(10, 14, 10, 16));
++
++            ModernButton sidebar = ModernButton.iconOnly(DeepNoteIcon.Kind.SIDEBAR_LEFT,
++                    "Toggle sidebar (" + MOD_LABEL + "+B)", ModernButton.Variant.GHOST, 18);
++            sidebar.addActionListener(event -> toggleSidebar());
++            statusLabel.setFont(DeepNoteTheme.SMALL);
++            statusLabel.setForeground(DeepNoteTheme.MUTED);
++            statusLabel.setIconTextGap(8);
++            toolbar.add(hbox(10, sidebar, statusLabel), BorderLayout.WEST);
++
++            ModernButton save = new ModernButton("Save", DeepNoteIcon.Kind.SAVE, ModernButton.Variant.SECONDARY);
++            save.setToolTipText("Save (" + MOD_LABEL + "+S)");
++            ModernButton rename = ModernButton.iconOnly(DeepNoteIcon.Kind.EDIT, "Rename note",
++                    ModernButton.Variant.GHOST, 18);
++            ModernButton delete = ModernButton.iconOnly(DeepNoteIcon.Kind.TRASH, "Delete note",
++                    ModernButton.Variant.DANGER, 18);
++            askButton.setToolTipText("Ask AI about this note (" + MOD_LABEL + "+J)");
++            save.addActionListener(event -> save());
++            rename.addActionListener(event -> rename());
++            delete.addActionListener(event -> delete());
++            askButton.addActionListener(event -> toggleAssistant(!assistantHost.isVisible()));
++            toolbar.add(hbox(6, rename, delete, Box.createHorizontalStrut(4), save, askButton), BorderLayout.EAST);
++            return toolbar;
++        }
++
++        private JScrollPane buildDocument() {
++            JPanel titleBlock = new JPanel();
++            titleBlock.setOpaque(false);
++            titleBlock.setLayout(new BoxLayout(titleBlock, BoxLayout.Y_AXIS));
++            titleLabel.setFont(DeepNoteTheme.EDITOR_TITLE);
++            titleLabel.setForeground(DeepNoteTheme.TEXT);
++            titleLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
++            metaLabel.setFont(DeepNoteTheme.SMALL);
++            metaLabel.setForeground(DeepNoteTheme.MUTED);
++            metaLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
++            titleBlock.add(titleLabel);
++            titleBlock.add(Box.createVerticalStrut(8));
++            titleBlock.add(metaLabel);
++            column.add(titleBlock, BorderLayout.NORTH);
++            column.add(editor, BorderLayout.CENTER);
++
++            JScrollPane scroll = new JScrollPane(column);
++            scroll.setBorder(null);
++            scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
++            scroll.getViewport().setBackground(DeepNoteTheme.CANVAS);
++            scroll.getVerticalScrollBar().setUnitIncrement(18);
++            scroll.getViewport().addComponentListener(new ComponentAdapter() {
++                @Override public void componentResized(ComponentEvent event) {
++                    int pad = Math.max(32, (scroll.getViewport().getWidth() - READING_WIDTH) / 2);
++                    column.setBorder(DeepNoteTheme.padding(30, pad, 80, pad));
++                }
++            });
++            return scroll;
++        }
++
++        void toggleAssistant(boolean show) {
+             assistantHost.setVisible(show);
++            askButton.setActive(show);
+             revalidate();
+             repaint();
++            if (show) SwingUtilities.invokeLater(assistantPanel::focusInput);
++        }
++
++        private void refreshHeader() {
++            titleLabel.setText(note.title());
++            chip.setTitle(note.title());
++            updateMeta();
++        }
++
++        private void updateMeta() {
++            String text = editor.getText();
++            int words = text.isBlank() ? 0 : text.trim().split("\\s+").length;
++            int minutes = Math.max(1, (int) Math.ceil(words / 220.0));
++            metaLabel.setText(words + (words == 1 ? " word" : " words") + "  ·  " + text.length() + " characters"
++                    + (words > 0 ? "  ·  " + minutes + " min read" : ""));
++        }
++
++        private void refreshStatus() {
++            statusLabel.setIcon(dot(dirty ? DeepNoteTheme.WARNING : DeepNoteTheme.SUCCESS, 8));
++            statusLabel.setText(dirty ? "Unsaved changes" : "Saved");
++            chip.setDirty(dirty);
++        }
++
++        private void markDirty() {
++            updateMeta();
++            if (dirty) return;
++            dirty = true;
++            refreshStatus();
+         }
+ 
+-        boolean isDirty() { return dirty; }
+-        private void markDirty() { dirty = true; updateTabTitle(); }
+-        private void updateTabTitle() { if (tabTitle != null) tabTitle.setText(note.title() + (dirty ? " *" : "")); }
+         boolean save() {
+-            try { note = noteService.saveNote(note, editor.getText()); dirty = false; updateTabTitle(); refreshNotes(); return true; }
+-            catch (NoteStorageException exception) { showError(exception.getMessage()); return false; }
++            try {
++                note = noteService.saveNote(note, editor.getText());
++                dirty = false;
++                refreshStatus();
++                reloadList();
++                return true;
++            } catch (NoteStorageException exception) {
++                showError(exception.getMessage());
++                return false;
++            }
+         }
++
+         void rename() {
+             String title = JOptionPane.showInputDialog(this, "New title:", note.title());
+             if (title == null) return;
+@@ -436,15 +855,20 @@ public class MainWindow extends JFrame {
+                 note = noteService.renameNote(note, title);
+                 openTabs.remove(old.path().toString());
+                 openTabs.put(note.path().toString(), this);
+-                updateTabTitle();
+                 assistantPanel.setNote(note.title());
+-                refreshNotes();
++                refreshHeader();
++                reloadList();
+             } catch (NoteStorageException exception) { showError(exception.getMessage()); }
+         }
++
+         void delete() {
+-            if (JOptionPane.showConfirmDialog(this, "Delete “" + note.title() + "”?", "Delete note", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
+-            try { noteService.deleteNote(note); openTabs.remove(note.path().toString()); tabs.remove(this); refreshNotes(); }
+-            catch (NoteStorageException exception) { showError(exception.getMessage()); }
++            if (JOptionPane.showConfirmDialog(this, "Delete “" + note.title() + "”? This cannot be undone.",
++                    "Delete note", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
++            try {
++                noteService.deleteNote(note);
++                removeTab(this);
++                reloadList();
++            } catch (NoteStorageException exception) { showError(exception.getMessage()); }
+         }
+     }
+ }
+diff --git a/src/main/java/com/deepnote/ui/ModernButton.java b/src/main/java/com/deepnote/ui/ModernButton.java
+new file mode 100644
+index 0000000..a437056
+--- /dev/null
++++ b/src/main/java/com/deepnote/ui/ModernButton.java
+@@ -0,0 +1,115 @@
++package com.deepnote.ui;
++
++import javax.swing.*;
++import java.awt.*;
++
++/** Flat, rounded button with hover and pressed states. One class covers every button style in the app. */
++public class ModernButton extends JButton {
++    public enum Variant { PRIMARY, SOFT, SECONDARY, GHOST, DANGER, CHIP }
++
++    private static final int ICON_SIZE = 16;
++
++    private final Variant variant;
++    private final DeepNoteIcon.Kind iconKind;
++    private final int iconSize;
++    private boolean active;
++
++    public ModernButton(String text, DeepNoteIcon.Kind iconKind, Variant variant) {
++        this(text, iconKind, variant, ICON_SIZE);
++    }
++
++    public static ModernButton iconOnly(DeepNoteIcon.Kind iconKind, String tooltip, Variant variant, int iconSize) {
++        ModernButton button = new ModernButton("", iconKind, variant, iconSize);
++        button.setToolTipText(tooltip);
++        return button;
++    }
++
++    private ModernButton(String text, DeepNoteIcon.Kind iconKind, Variant variant, int iconSize) {
++        super(text);
++        this.variant = variant;
++        this.iconKind = iconKind;
++        this.iconSize = iconSize;
++        setFont(DeepNoteTheme.BODY_MEDIUM);
++        setFocusPainted(false);
++        setBorderPainted(false);
++        setContentAreaFilled(false);
++        setOpaque(false);
++        setRolloverEnabled(true);
++        setIconTextGap(8);
++        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
++        putClientProperty("JButton.buttonType", "borderless");
++        boolean hasText = text != null && !text.isEmpty();
++        int vertical = variant == Variant.CHIP ? 8 : hasText ? 9 : Math.max(4, (iconSize - 6) / 2);
++        int horizontal = hasText ? (variant == Variant.CHIP ? 14 : 14) : vertical + 1;
++        setBorder(BorderFactory.createEmptyBorder(vertical, horizontal, vertical, horizontal));
++        addChangeListener(event -> refreshColors());
++        refreshColors();
++    }
++
++    public void setActive(boolean active) {
++        this.active = active;
++        refreshColors();
++        repaint();
++    }
++
++    private void refreshColors() {
++        Color normal = normalForeground();
++        Color hover = hoverForeground();
++        setForeground(getModel().isRollover() || getModel().isPressed() ? hover : normal);
++        if (iconKind != null) {
++            setIcon(new DeepNoteIcon(iconKind, normal, iconSize));
++            setRolloverIcon(new DeepNoteIcon(iconKind, hover, iconSize));
++            setPressedIcon(new DeepNoteIcon(iconKind, hover, iconSize));
++        }
++    }
++
++    private Color normalForeground() {
++        return switch (variant) {
++            case PRIMARY -> Color.WHITE;
++            case SOFT -> active ? Color.WHITE : DeepNoteTheme.ACCENT_TEXT;
++            case SECONDARY -> DeepNoteTheme.TEXT;
++            case GHOST, DANGER -> active ? DeepNoteTheme.TEXT : DeepNoteTheme.MUTED;
++            case CHIP -> DeepNoteTheme.TEXT_SECONDARY;
++        };
++    }
++
++    private Color hoverForeground() {
++        return switch (variant) {
++            case PRIMARY -> Color.WHITE;
++            case SOFT -> active ? Color.WHITE : DeepNoteTheme.ACCENT_TEXT;
++            case DANGER -> DeepNoteTheme.DANGER;
++            default -> DeepNoteTheme.TEXT;
++        };
++    }
++
++    private Color background() {
++        boolean hover = getModel().isRollover();
++        boolean down = getModel().isPressed();
++        return switch (variant) {
++            case PRIMARY -> down ? DeepNoteTheme.ACCENT_PRESSED : hover ? DeepNoteTheme.ACCENT_HOVER : DeepNoteTheme.ACCENT;
++            case SOFT -> active ? (hover ? DeepNoteTheme.ACCENT_HOVER : DeepNoteTheme.ACCENT)
++                    : hover || down ? DeepNoteTheme.hex("#2D3163") : DeepNoteTheme.ACCENT_SOFT;
++            case SECONDARY, CHIP -> down || hover ? DeepNoteTheme.HOVER : DeepNoteTheme.RAISED;
++            case GHOST -> hover || down || active ? DeepNoteTheme.HOVER : null;
++            case DANGER -> hover || down ? DeepNoteTheme.DANGER_SOFT : null;
++        };
++    }
++
++    @Override protected void paintComponent(Graphics graphics) {
++        Graphics2D g = (Graphics2D) graphics.create();
++        DeepNoteTheme.smooth(g);
++        if (!isEnabled()) g.setComposite(AlphaComposite.SrcOver.derive(0.45f));
++        int arc = variant == Variant.CHIP ? 16 : 12;
++        Color background = background();
++        if (background != null) {
++            g.setColor(background);
++            g.fillRoundRect(0, 0, getWidth(), getHeight(), arc, arc);
++        }
++        if (variant == Variant.SECONDARY || variant == Variant.CHIP) {
++            g.setColor(DeepNoteTheme.BORDER);
++            g.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, arc, arc);
++        }
++        super.paintComponent(g);
++        g.dispose();
++    }
++}
+diff --git a/src/main/java/com/deepnote/ui/RoundedPanel.java b/src/main/java/com/deepnote/ui/RoundedPanel.java
+new file mode 100644
+index 0000000..8b5ec06
+--- /dev/null
++++ b/src/main/java/com/deepnote/ui/RoundedPanel.java
+@@ -0,0 +1,44 @@
++package com.deepnote.ui;
++
++import javax.swing.*;
++import java.awt.*;
++
++/** Transparent panel that paints a rounded, optionally outlined surface behind its children. */
++public class RoundedPanel extends JPanel {
++    private Color fill;
++    private Color stroke;
++    private final int arc;
++
++    public RoundedPanel(LayoutManager layout, int arc, Color fill, Color stroke) {
++        super(layout);
++        this.arc = arc;
++        this.fill = fill;
++        this.stroke = stroke;
++        setOpaque(false);
++    }
++
++    public void setFill(Color fill) {
++        this.fill = fill;
++        repaint();
++    }
++
++    public void setStroke(Color stroke) {
++        this.stroke = stroke;
++        repaint();
++    }
++
++    @Override protected void paintComponent(Graphics graphics) {
++        Graphics2D g = (Graphics2D) graphics.create();
++        DeepNoteTheme.smooth(g);
++        if (fill != null) {
++            g.setColor(fill);
++            g.fillRoundRect(0, 0, getWidth(), getHeight(), arc, arc);
++        }
++        if (stroke != null) {
++            g.setColor(stroke);
++            g.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, arc, arc);
++        }
++        g.dispose();
++        super.paintComponent(graphics);
++    }
++}
+diff --git a/src/main/java/com/deepnote/ui/ScrollableColumn.java b/src/main/java/com/deepnote/ui/ScrollableColumn.java
+new file mode 100644
+index 0000000..77da113
+--- /dev/null
++++ b/src/main/java/com/deepnote/ui/ScrollableColumn.java
+@@ -0,0 +1,32 @@
++package com.deepnote.ui;
++
++import javax.swing.*;
++import java.awt.*;
++
++/** A panel that follows the viewport width, so wrapped text inside it reflows when the window is resized. */
++public class ScrollableColumn extends JPanel implements Scrollable {
++    private final boolean fillViewportHeight;
++
++    /** @param fillViewportHeight stretch short content to the viewport height (editor) or keep it top-aligned (chat) */
++    public ScrollableColumn(LayoutManager layout, boolean fillViewportHeight) {
++        super(layout);
++        this.fillViewportHeight = fillViewportHeight;
++        setOpaque(false);
++    }
++
++    @Override public Dimension getPreferredScrollableViewportSize() { return getPreferredSize(); }
++
++    @Override public int getScrollableUnitIncrement(Rectangle visible, int orientation, int direction) { return 18; }
++
++    @Override public int getScrollableBlockIncrement(Rectangle visible, int orientation, int direction) {
++        return orientation == SwingConstants.VERTICAL ? Math.max(40, visible.height - 24) : visible.width;
++    }
++
++    @Override public boolean getScrollableTracksViewportWidth() { return true; }
++
++    /** Stretching lets a click anywhere in a short editor column still focus the text area. */
++    @Override public boolean getScrollableTracksViewportHeight() {
++        return fillViewportHeight && getParent() instanceof JViewport viewport
++                && viewport.getHeight() > getPreferredSize().height;
++    }
++}

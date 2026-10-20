@@ -2,10 +2,17 @@ package com.deepnote.ui;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.geom.Ellipse2D;
+import java.awt.geom.Line2D;
+import java.awt.geom.Path2D;
+import java.awt.geom.RoundRectangle2D;
 
-/** Small line icons painted locally to keep the desktop UI dependency-light. */
+/** Rounded line icons drawn on a 24-unit grid, so they stay crisp at any size without image assets. */
 public final class DeepNoteIcon implements Icon {
-    public enum Kind { SEARCH, PLUS, SAVE, EDIT, TRASH, SPARK, CLOSE, SEND, DOCUMENT, CHEVRON }
+    public enum Kind {
+        SEARCH, PLUS, SAVE, EDIT, TRASH, SPARK, CLOSE, SEND, DOCUMENT, CHEVRON,
+        SIDEBAR_LEFT, SIDEBAR_RIGHT, CHECK, LOCK
+    }
 
     private final Kind kind;
     private final Color color;
@@ -24,22 +31,95 @@ public final class DeepNoteIcon implements Icon {
 
     @Override public void paintIcon(Component component, Graphics graphics, int x, int y) {
         Graphics2D g = (Graphics2D) graphics.create();
+        DeepNoteTheme.smooth(g);
+        g.translate(x, y);
+        double scale = size / 24.0;
+        g.scale(scale, scale);
         g.setColor(color);
-        g.setStroke(new BasicStroke(Math.max(1.3f, size / 10f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        int mid = size / 2;
+        g.setStroke(new BasicStroke(1.75f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
         switch (kind) {
-            case SEARCH -> { g.drawOval(x + 2, y + 2, size - 7, size - 7); g.drawLine(x + size - 6, y + size - 6, x + size - 2, y + size - 2); }
-            case PLUS -> { g.drawLine(x + 3, y + mid, x + size - 3, y + mid); g.drawLine(x + mid, y + 3, x + mid, y + size - 3); }
-            case SAVE -> { g.drawRoundRect(x + 2, y + 2, size - 4, size - 4, 3, 3); g.drawLine(x + 5, y + 3, x + 5, y + 8); g.drawRoundRect(x + 5, y + 10, size - 10, size - 7, 2, 2); }
-            case EDIT -> { g.drawLine(x + 4, y + size - 4, x + 5, y + size - 8); g.drawLine(x + 5, y + size - 8, x + size - 5, y + 3); g.drawLine(x + size - 5, y + 3, x + size - 2, y + 6); g.drawLine(x + size - 2, y + 6, x + 6, y + size - 7); }
-            case TRASH -> { g.drawLine(x + 4, y + 5, x + size - 4, y + 5); g.drawLine(x + 6, y + 5, x + 7, y + size - 3); g.drawLine(x + size - 6, y + 5, x + size - 7, y + size - 3); g.drawLine(x + 7, y + 3, x + size - 7, y + 3); g.drawLine(x + 8, y + 1, x + size - 8, y + 1); }
-            case SPARK -> { g.drawLine(x + mid, y + 1, x + mid, y + 6); g.drawLine(x + mid, y + size - 6, x + mid, y + size - 1); g.drawLine(x + 1, y + mid, x + 6, y + mid); g.drawLine(x + size - 6, y + mid, x + size - 1, y + mid); g.drawLine(x + 4, y + 4, x + 7, y + 7); g.drawLine(x + size - 7, y + size - 7, x + size - 4, y + size - 4); }
-            case CLOSE -> { g.drawLine(x + 4, y + 4, x + size - 4, y + size - 4); g.drawLine(x + size - 4, y + 4, x + 4, y + size - 4); }
-            case SEND -> { Polygon arrow = new Polygon(new int[]{x + 2, x + size - 2, x + 2, x + 6}, new int[]{y + 2, y + mid, y + size - 2, y + mid}, 4); g.draw(arrow); g.drawLine(x + 3, y + mid, x + size - 3, y + mid); }
-            case DOCUMENT -> { g.drawRoundRect(x + 3, y + 2, size - 6, size - 4, 2, 2); g.drawLine(x + 6, y + 6, x + size - 6, y + 6); g.drawLine(x + 6, y + 9, x + size - 6, y + 9); }
-            case CHEVRON -> { g.drawLine(x + 4, y + 6, x + mid, y + size - 5); g.drawLine(x + mid, y + size - 5, x + size - 4, y + 6); }
+            case SEARCH -> {
+                g.draw(new Ellipse2D.Double(3.5, 3.5, 15, 15));
+                poly(g, false, 16.5, 16.5, 21, 21);
+            }
+            case PLUS -> {
+                poly(g, false, 5, 12, 19, 12);
+                poly(g, false, 12, 5, 12, 19);
+            }
+            case SAVE -> {
+                g.draw(new RoundRectangle2D.Double(4, 3, 16, 18, 4, 4));
+                poly(g, false, 8, 3, 8, 8, 15, 8, 15, 3);
+                g.draw(new RoundRectangle2D.Double(8, 13, 8, 8, 2, 2));
+            }
+            case EDIT -> {
+                poly(g, true, 4, 20, 5.2, 15.5, 16, 4.7, 19.3, 8, 8.5, 18.8);
+                poly(g, false, 14, 6.8, 17.2, 10);
+            }
+            case TRASH -> {
+                poly(g, false, 4, 7, 20, 7);
+                poly(g, false, 6, 7, 7, 20, 17, 20, 18, 7);
+                poly(g, false, 9, 7, 9, 4, 15, 4, 15, 7);
+                poly(g, false, 10, 11, 10, 16);
+                poly(g, false, 14, 11, 14, 16);
+            }
+            case SPARK -> {
+                poly(g, true, 12, 3.5, 13.9, 9.1, 19.5, 11, 13.9, 12.9, 12, 18.5, 10.1, 12.9, 4.5, 11, 10.1, 9.1);
+                poly(g, false, 18.5, 16, 18.5, 21);
+                poly(g, false, 16, 18.5, 21, 18.5);
+            }
+            case CLOSE -> {
+                poly(g, false, 6, 6, 18, 18);
+                poly(g, false, 18, 6, 6, 18);
+            }
+            case SEND -> {
+                poly(g, false, 12, 19, 12, 5);
+                poly(g, false, 6, 11, 12, 5, 18, 11);
+            }
+            case DOCUMENT -> {
+                Path2D.Double page = new Path2D.Double();
+                page.moveTo(14, 3);
+                page.lineTo(7, 3);
+                page.quadTo(5, 3, 5, 5);
+                page.lineTo(5, 19);
+                page.quadTo(5, 21, 7, 21);
+                page.lineTo(17, 21);
+                page.quadTo(19, 21, 19, 19);
+                page.lineTo(19, 8);
+                page.closePath();
+                g.draw(page);
+                poly(g, false, 14, 3, 14, 8, 19, 8);
+                poly(g, false, 9, 13, 15, 13);
+                poly(g, false, 9, 17, 15, 17);
+            }
+            case CHEVRON -> poly(g, false, 7, 10, 12, 15, 17, 10);
+            case SIDEBAR_LEFT -> {
+                g.draw(new RoundRectangle2D.Double(3, 4, 18, 16, 4, 4));
+                g.draw(new Line2D.Double(9, 4, 9, 20));
+            }
+            case SIDEBAR_RIGHT -> {
+                g.draw(new RoundRectangle2D.Double(3, 4, 18, 16, 4, 4));
+                g.draw(new Line2D.Double(15, 4, 15, 20));
+            }
+            case CHECK -> poly(g, false, 5, 12.5, 10, 17.5, 19, 7);
+            case LOCK -> {
+                g.draw(new RoundRectangle2D.Double(5, 11, 14, 10, 3, 3));
+                Path2D.Double shackle = new Path2D.Double();
+                shackle.moveTo(8, 11);
+                shackle.lineTo(8, 8);
+                shackle.quadTo(8, 4, 12, 4);
+                shackle.quadTo(16, 4, 16, 8);
+                shackle.lineTo(16, 11);
+                g.draw(shackle);
+            }
         }
         g.dispose();
+    }
+
+    private static void poly(Graphics2D g, boolean closed, double... points) {
+        Path2D.Double path = new Path2D.Double();
+        path.moveTo(points[0], points[1]);
+        for (int i = 2; i < points.length; i += 2) path.lineTo(points[i], points[i + 1]);
+        if (closed) path.closePath();
+        g.draw(path);
     }
 }

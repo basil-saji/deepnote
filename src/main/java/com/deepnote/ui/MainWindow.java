@@ -13,401 +13,727 @@ import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
-/** Main DeepNote workspace and desktop shell. */
+/** Main DeepNote workspace: sidebar, tabbed writing surface, and the optional AI panel. */
 public class MainWindow extends JFrame {
+    private static final int MOD = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+    private static final String MOD_LABEL = MOD == InputEvent.META_DOWN_MASK ? "⌘" : "Ctrl";
+    private static final int SIDEBAR_WIDTH = 288;
+    private static final int ASSISTANT_WIDTH = 392;
+    private static final int READING_WIDTH = 760;
+
     private final NoteService noteService;
     private final LocalSearchService searchService = new LocalSearchService();
     private final AIAssistantService assistantService;
+    private final String chatModelName;
     private final DefaultListModel<Note> noteListModel = new DefaultListModel<>();
-    private final JList<Note> noteList = new JList<>(noteListModel);
-    private final JTabbedPane tabs = new JTabbedPane();
-    private final Map<String, EditorTab> openTabs = new HashMap<>();
+    private final JList<Note> noteList = new JList<>(noteListModel) {
+        @Override protected void paintComponent(Graphics graphics) {
+            super.paintComponent(graphics);
+            if (getModel().getSize() > 0) return;
+            Graphics2D g = (Graphics2D) graphics.create();
+            DeepNoteTheme.smooth(g);
+            g.setFont(DeepNoteTheme.SMALL);
+            g.setColor(DeepNoteTheme.FAINT);
+            String message = searchField.getText().isBlank() ? "No notes yet" : "No matching notes";
+            int width = g.getFontMetrics().stringWidth(message);
+            g.drawString(message, (getWidth() - width) / 2, 40);
+            g.dispose();
+        }
+    };
     private final JTextField searchField = new JTextField();
-    private final JPanel workspaceArea = new JPanel(new CardLayout());
-    private final JPanel homePanel = new JPanel(new BorderLayout());
     private final JLabel noteCountLabel = new JLabel();
+    private final JPanel contentCards = new JPanel(new CardLayout());
+    private final JPanel tabStrip = new JPanel();
+    private final JPanel editorStack = new JPanel(new CardLayout());
+    private final JPanel homePanel = new JPanel(new GridBagLayout());
+    private final List<EditorTab> tabOrder = new ArrayList<>();
+    private final Map<String, EditorTab> openTabs = new HashMap<>();
+    private JPanel navigation;
+    private EditorTab selectedTab;
+    private boolean syncingSelection;
+    private int hoverIndex = -1;
 
     public MainWindow(AppConfig config) {
         super("DeepNote");
+        chatModelName = config.chatModelName();
         noteService = new NoteService(config.notesDirectory());
         assistantService = new AIAssistantService(
                 new ContextManager(config.maxRecentChatTurns(), config.contextCharacterBudget()),
-                new OllamaChatModelClient(config.ollamaBaseUrl(), config.chatModelName(), Duration.ofSeconds(config.requestTimeoutSeconds())));
+                new OllamaChatModelClient(config.ollamaBaseUrl(), config.chatModelName(),
+                        Duration.ofSeconds(config.requestTimeoutSeconds())));
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
-        setMinimumSize(new Dimension(980, 640));
-        setSize(1280, 800);
+        setMinimumSize(new Dimension(1000, 660));
+        setSize(1320, 820);
         setLocationByPlatform(true);
         buildUi();
-        refreshNotes();
+        reloadList();
         addWindowListener(new java.awt.event.WindowAdapter() {
             @Override public void windowClosing(java.awt.event.WindowEvent event) { closeApplication(); }
         });
     }
 
-    private void buildUi() {
-        getContentPane().setBackground(DeepNoteTheme.BACKGROUND);
-        setLayout(new BorderLayout());
-        add(buildHeader(), BorderLayout.NORTH);
+    // ---------------------------------------------------------------- layout
 
-        JPanel navigation = buildNavigation();
-        tabs.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
-        tabs.setBorder(null);
-        tabs.setOpaque(true);
-        tabs.setBackground(DeepNoteTheme.SURFACE);
-        workspaceArea.add(buildHomePanel(), "home");
-        workspaceArea.add(tabs, "tabs");
+    private void buildUi() {
+        getContentPane().setBackground(DeepNoteTheme.CANVAS);
+        getRootPane().putClientProperty("JRootPane.titleBarBackground", DeepNoteTheme.SIDEBAR);
+        getRootPane().putClientProperty("JRootPane.titleBarForeground", DeepNoteTheme.MUTED);
+        setLayout(new BorderLayout());
+        navigation = buildNavigation();
+
+        contentCards.setBackground(DeepNoteTheme.CANVAS);
+        contentCards.add(buildWorkspace(), "workspace");
+        contentCards.add(buildHome(), "home");
         showHome();
 
-        JSplitPane mainSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, navigation, workspaceArea);
-        mainSplit.setDividerLocation(270);
-        mainSplit.setResizeWeight(0);
-        mainSplit.setBorder(null);
-        mainSplit.setContinuousLayout(true);
-        add(mainSplit, BorderLayout.CENTER);
+        add(navigation, BorderLayout.WEST);
+        add(contentCards, BorderLayout.CENTER);
         add(buildStatusBar(), BorderLayout.SOUTH);
 
         noteList.addListSelectionListener(event -> {
-            if (!event.getValueIsAdjusting() && noteList.getSelectedValue() != null) openNote(noteList.getSelectedValue());
+            if (event.getValueIsAdjusting() || syncingSelection) return;
+            Note chosen = noteList.getSelectedValue();
+            if (chosen != null) openNote(noteService.readNote(chosen.path()));
         });
         searchField.getDocument().addDocumentListener(new DocumentListener() {
-            @Override public void insertUpdate(DocumentEvent event) { filterNotes(); }
-            @Override public void removeUpdate(DocumentEvent event) { filterNotes(); }
-            @Override public void changedUpdate(DocumentEvent event) { filterNotes(); }
+            @Override public void insertUpdate(DocumentEvent event) { reloadList(); }
+            @Override public void removeUpdate(DocumentEvent event) { reloadList(); }
+            @Override public void changedUpdate(DocumentEvent event) { reloadList(); }
         });
-        tabs.addChangeListener(event -> updateSelectionFromTab());
-    }
-
-    private JPanel buildHeader() {
-        JPanel header = new JPanel(new BorderLayout());
-        header.setBackground(DeepNoteTheme.SURFACE);
-        header.setBorder(BorderFactory.createCompoundBorder(DeepNoteTheme.divider(0, 0, 1, 0), DeepNoteTheme.padding(12, 18, 12, 18)));
-        JPanel identity = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
-        identity.setOpaque(false);
-        JLabel mark = new JLabel("D", SwingConstants.CENTER);
-        mark.setOpaque(true);
-        mark.setBackground(DeepNoteTheme.ACCENT);
-        mark.setForeground(Color.WHITE);
-        mark.setFont(new Font("Segoe UI", Font.BOLD, 15));
-        mark.setPreferredSize(new Dimension(30, 30));
-        JLabel title = new JLabel("DeepNote");
-        title.setFont(DeepNoteTheme.TITLE);
-        JLabel subtitle = new JLabel("Private notes, local intelligence");
-        subtitle.setForeground(DeepNoteTheme.MUTED);
-        subtitle.setFont(DeepNoteTheme.BODY);
-        JPanel copy = new JPanel();
-        copy.setOpaque(false);
-        copy.setLayout(new BoxLayout(copy, BoxLayout.Y_AXIS));
-        copy.add(title);
-        copy.add(subtitle);
-        identity.add(mark);
-        identity.add(copy);
-        header.add(identity, BorderLayout.WEST);
-        JButton newNote = actionButton("New note", new DeepNoteIcon(DeepNoteIcon.Kind.PLUS, Color.WHITE), ButtonStyle.PRIMARY);
-        newNote.setToolTipText("Create a new TXT note");
-        newNote.addActionListener(event -> createNote());
-        header.add(newNote, BorderLayout.EAST);
-        return header;
+        installShortcuts();
     }
 
     private JPanel buildNavigation() {
-        JPanel navigation = new JPanel(new BorderLayout(0, 14));
-        navigation.setBackground(DeepNoteTheme.SURFACE);
-        navigation.setBorder(BorderFactory.createCompoundBorder(DeepNoteTheme.divider(0, 0, 0, 1), DeepNoteTheme.padding(18, 16, 16, 16)));
-        JPanel searchBlock = new JPanel(new BorderLayout(0, 10));
-        searchBlock.setOpaque(false);
+        JPanel nav = new JPanel(new BorderLayout(0, 12));
+        nav.setBackground(DeepNoteTheme.SIDEBAR);
+        nav.setBorder(BorderFactory.createCompoundBorder(
+                DeepNoteTheme.divider(0, 0, 0, 1), DeepNoteTheme.padding(14, 12, 12, 12)));
+        nav.setPreferredSize(new Dimension(SIDEBAR_WIDTH, 0));
+
+        JPanel top = new JPanel(new GridBagLayout());
+        top.setOpaque(false);
+        GridBagConstraints c = new GridBagConstraints();
+        c.gridx = 0;
+        c.weightx = 1;
+        c.fill = GridBagConstraints.HORIZONTAL;
+
+        JPanel brand = new JPanel(new BorderLayout(10, 0));
+        brand.setOpaque(false);
+        brand.setBorder(DeepNoteTheme.padding(0, 4, 0, 0));
+        JLabel name = new JLabel("DeepNote");
+        name.setFont(DeepNoteTheme.TITLE_SM);
+        name.setForeground(DeepNoteTheme.TEXT);
+        ModernButton hide = ModernButton.iconOnly(DeepNoteIcon.Kind.SIDEBAR_LEFT,
+                "Hide sidebar (" + MOD_LABEL + "+B)", ModernButton.Variant.GHOST, 18);
+        hide.addActionListener(event -> toggleSidebar());
+        brand.add(new IconBadge(DeepNoteIcon.Kind.SPARK, 30, true), BorderLayout.WEST);
+        brand.add(name, BorderLayout.CENTER);
+        brand.add(hide, BorderLayout.EAST);
+        c.gridy = 0;
+        top.add(brand, c);
+
+        ModernButton newNote = new ModernButton("New note", DeepNoteIcon.Kind.PLUS, ModernButton.Variant.PRIMARY);
+        newNote.setToolTipText("Create a new TXT note (" + MOD_LABEL + "+N)");
+        newNote.addActionListener(event -> createNote());
+        c.gridy = 1;
+        c.insets = new Insets(14, 0, 0, 0);
+        top.add(newNote, c);
+
         searchField.putClientProperty("JTextField.placeholderText", "Search notes");
-        searchField.putClientProperty("JTextField.leadingIcon", new DeepNoteIcon(DeepNoteIcon.Kind.SEARCH, DeepNoteTheme.MUTED));
-        searchField.setToolTipText("Search note titles and content");
-        searchBlock.add(searchField, BorderLayout.NORTH);
+        searchField.putClientProperty("JTextField.leadingIcon",
+                new DeepNoteIcon(DeepNoteIcon.Kind.SEARCH, DeepNoteTheme.MUTED, 16));
+        searchField.putClientProperty("JTextField.showClearButton", true);
+        searchField.setToolTipText("Search titles and content (" + MOD_LABEL + "+K)");
+        c.gridy = 2;
+        c.insets = new Insets(10, 0, 0, 0);
+        top.add(searchField, c);
+        nav.add(top, BorderLayout.NORTH);
+
+        JPanel library = new JPanel(new BorderLayout(0, 6));
+        library.setOpaque(false);
         JPanel libraryHeader = new JPanel(new BorderLayout());
         libraryHeader.setOpaque(false);
-        JLabel libraryLabel = new JLabel("YOUR NOTES");
+        libraryHeader.setBorder(DeepNoteTheme.padding(6, 6, 0, 6));
+        JLabel libraryLabel = new JLabel("NOTES");
         libraryLabel.setFont(DeepNoteTheme.LABEL);
-        libraryLabel.setForeground(DeepNoteTheme.MUTED);
-        noteCountLabel.setFont(DeepNoteTheme.LABEL);
-        noteCountLabel.setForeground(DeepNoteTheme.MUTED);
+        libraryLabel.setForeground(DeepNoteTheme.FAINT);
+        noteCountLabel.setFont(DeepNoteTheme.SMALL);
+        noteCountLabel.setForeground(DeepNoteTheme.FAINT);
         libraryHeader.add(libraryLabel, BorderLayout.WEST);
         libraryHeader.add(noteCountLabel, BorderLayout.EAST);
-        searchBlock.add(libraryHeader, BorderLayout.SOUTH);
-        navigation.add(searchBlock, BorderLayout.NORTH);
-        noteList.setBackground(DeepNoteTheme.SURFACE);
-        noteList.setForeground(DeepNoteTheme.TEXT);
+        library.add(libraryHeader, BorderLayout.NORTH);
+
+        noteList.setBackground(DeepNoteTheme.SIDEBAR);
         noteList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        noteList.setFixedCellHeight(58);
+        noteList.setFixedCellHeight(64);
         noteList.setBorder(null);
         noteList.setCellRenderer(new NoteCellRenderer());
-        JScrollPane notesScroll = new JScrollPane(noteList);
-        notesScroll.setBorder(null);
-        notesScroll.getViewport().setBackground(DeepNoteTheme.SURFACE);
-        navigation.add(notesScroll, BorderLayout.CENTER);
-        JPanel navigationFooter = new JPanel(new BorderLayout(0, 8));
-        navigationFooter.setOpaque(false);
-        JLabel hint = new JLabel("Keyword search · TXT source of truth");
-        hint.setFont(new Font("Segoe UI", Font.PLAIN, 11));
-        hint.setForeground(DeepNoteTheme.MUTED);
-        navigationFooter.add(hint, BorderLayout.NORTH);
-        JButton footerNew = actionButton("New note", new DeepNoteIcon(DeepNoteIcon.Kind.PLUS, DeepNoteTheme.ACCENT_HOVER), ButtonStyle.GHOST);
-        footerNew.setHorizontalAlignment(SwingConstants.LEFT);
-        footerNew.addActionListener(event -> createNote());
-        navigationFooter.add(footerNew, BorderLayout.SOUTH);
-        navigation.add(navigationFooter, BorderLayout.SOUTH);
-        navigation.setPreferredSize(new Dimension(270, 0));
-        return navigation;
+        MouseAdapter hover = new MouseAdapter() {
+            @Override public void mouseMoved(MouseEvent event) {
+                int index = noteList.locationToIndex(event.getPoint());
+                Rectangle bounds = index < 0 ? null : noteList.getCellBounds(index, index);
+                setHoverIndex(bounds != null && bounds.contains(event.getPoint()) ? index : -1);
+            }
+
+            @Override public void mouseExited(MouseEvent event) { setHoverIndex(-1); }
+        };
+        noteList.addMouseMotionListener(hover);
+        noteList.addMouseListener(hover);
+        JScrollPane scroll = new JScrollPane(noteList);
+        scroll.setBorder(null);
+        scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        scroll.getViewport().setBackground(DeepNoteTheme.SIDEBAR);
+        scroll.setBackground(DeepNoteTheme.SIDEBAR);
+        library.add(scroll, BorderLayout.CENTER);
+        nav.add(library, BorderLayout.CENTER);
+
+        JPanel footer = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        footer.setOpaque(false);
+        footer.setBorder(DeepNoteTheme.padding(4, 2, 0, 0));
+        JLabel privacy = new JLabel("Stored locally as .txt files",
+                new DeepNoteIcon(DeepNoteIcon.Kind.LOCK, DeepNoteTheme.FAINT, 14), SwingConstants.LEFT);
+        privacy.setIconTextGap(6);
+        privacy.setFont(DeepNoteTheme.SMALL);
+        privacy.setForeground(DeepNoteTheme.FAINT);
+        footer.add(privacy);
+        nav.add(footer, BorderLayout.SOUTH);
+        return nav;
     }
 
-    private JPanel buildHomePanel() {
-        homePanel.setBackground(DeepNoteTheme.BACKGROUND);
-        homePanel.setBorder(DeepNoteTheme.padding(50, 64, 50, 64));
-        JPanel content = new JPanel();
-        content.setOpaque(false);
-        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
-        JLabel eyebrow = new JLabel("YOUR PRIVATE WORKSPACE");
-        eyebrow.setForeground(DeepNoteTheme.ACCENT_HOVER);
-        eyebrow.setFont(DeepNoteTheme.LABEL);
-        JLabel heading = new JLabel("Make space for better thinking.");
-        heading.setForeground(DeepNoteTheme.TEXT);
-        heading.setFont(DeepNoteTheme.DISPLAY);
-        JLabel description = new JLabel("Create a plain-text note, keep it portable, and ask your local assistant when you need a second perspective.");
-        description.setForeground(DeepNoteTheme.MUTED);
-        description.setFont(DeepNoteTheme.BODY_LARGE);
-        description.setAlignmentX(Component.LEFT_ALIGNMENT);
-        content.add(eyebrow);
-        content.add(Box.createVerticalStrut(10));
-        content.add(heading);
-        content.add(Box.createVerticalStrut(12));
-        content.add(description);
-        content.add(Box.createVerticalStrut(28));
-        JButton create = actionButton("Create your first note", new DeepNoteIcon(DeepNoteIcon.Kind.PLUS, Color.WHITE), ButtonStyle.PRIMARY);
-        create.setAlignmentX(Component.LEFT_ALIGNMENT);
-        create.addActionListener(event -> createNote());
-        content.add(create);
-        JPanel wrapper = new JPanel(new BorderLayout());
-        wrapper.setOpaque(false);
-        wrapper.add(content, BorderLayout.NORTH);
-        homePanel.add(wrapper, BorderLayout.NORTH);
+    private JPanel buildWorkspace() {
+        JPanel workspace = new JPanel(new BorderLayout());
+        workspace.setBackground(DeepNoteTheme.CANVAS);
+        tabStrip.setOpaque(false);
+        tabStrip.setLayout(new BoxLayout(tabStrip, BoxLayout.X_AXIS));
+        tabStrip.setBorder(DeepNoteTheme.padding(8, 12, 8, 12));
+        JScrollPane tabScroll = new JScrollPane(tabStrip, ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER,
+                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+        tabScroll.setBorder(DeepNoteTheme.divider(0, 0, 1, 0));
+        tabScroll.getViewport().setBackground(DeepNoteTheme.SIDEBAR);
+        tabScroll.setBackground(DeepNoteTheme.SIDEBAR);
+        tabScroll.getHorizontalScrollBar().setPreferredSize(new Dimension(0, 8));
+        editorStack.setBackground(DeepNoteTheme.CANVAS);
+        workspace.add(tabScroll, BorderLayout.NORTH);
+        workspace.add(editorStack, BorderLayout.CENTER);
+        return workspace;
+    }
+
+    private JPanel buildHome() {
+        homePanel.setBackground(DeepNoteTheme.CANVAS);
         return homePanel;
+    }
+
+    private void rebuildHome(List<Note> notes) {
+        homePanel.removeAll();
+        JPanel column = new JPanel();
+        column.setOpaque(false);
+        column.setLayout(new BoxLayout(column, BoxLayout.Y_AXIS));
+
+        IconBadge mark = new IconBadge(DeepNoteIcon.Kind.SPARK, 52, true);
+        JLabel heading = new JLabel("Good ideas start as plain text.");
+        heading.setFont(DeepNoteTheme.DISPLAY);
+        heading.setForeground(DeepNoteTheme.TEXT);
+        JLabel copy = new JLabel("<html><div style='width:480px'>Write freely in portable .txt files, then ask a "
+                + "local AI about any note. Nothing ever leaves your machine.</div></html>");
+        copy.setFont(DeepNoteTheme.CHAT);
+        copy.setForeground(DeepNoteTheme.MUTED);
+        ModernButton create = new ModernButton("New note", DeepNoteIcon.Kind.PLUS, ModernButton.Variant.PRIMARY);
+        create.addActionListener(event -> createNote());
+        JPanel hints = new JPanel();
+        hints.setOpaque(false);
+        hints.setLayout(new BoxLayout(hints, BoxLayout.X_AXIS));
+        String[][] shortcuts = {{MOD_LABEL + " N", "New note"}, {MOD_LABEL + " K", "Search"},
+                {MOD_LABEL + " J", "Ask AI"}, {MOD_LABEL + " B", "Sidebar"}};
+        for (String[] shortcut : shortcuts) {
+            hints.add(shortcutHint(shortcut[0], shortcut[1]));
+            hints.add(Box.createHorizontalStrut(18));
+        }
+        for (JComponent component : new JComponent[]{mark, heading, copy, create, hints}) {
+            component.setAlignmentX(Component.LEFT_ALIGNMENT);
+        }
+        column.add(mark);
+        column.add(Box.createVerticalStrut(22));
+        column.add(heading);
+        column.add(Box.createVerticalStrut(12));
+        column.add(copy);
+        column.add(Box.createVerticalStrut(26));
+        column.add(create);
+        column.add(Box.createVerticalStrut(18));
+        column.add(hints);
+
+        if (!notes.isEmpty()) {
+            JLabel recent = new JLabel("RECENT NOTES");
+            recent.setFont(DeepNoteTheme.LABEL);
+            recent.setForeground(DeepNoteTheme.FAINT);
+            recent.setAlignmentX(Component.LEFT_ALIGNMENT);
+            JPanel grid = new JPanel(new GridLayout(0, 2, 12, 12));
+            grid.setOpaque(false);
+            grid.setAlignmentX(Component.LEFT_ALIGNMENT);
+            notes.stream().sorted(Comparator.comparingLong((Note note) -> lastModified(note.path())).reversed())
+                    .limit(4).forEach(note -> grid.add(recentCard(note)));
+            column.add(Box.createVerticalStrut(44));
+            column.add(recent);
+            column.add(Box.createVerticalStrut(12));
+            column.add(grid);
+        }
+        homePanel.add(column);
+        homePanel.revalidate();
+        homePanel.repaint();
+    }
+
+    private JComponent shortcutHint(String keys, String label) {
+        JPanel hint = new JPanel();
+        hint.setOpaque(false);
+        hint.setLayout(new BoxLayout(hint, BoxLayout.X_AXIS));
+        RoundedPanel keycap = new RoundedPanel(new BorderLayout(), 8, DeepNoteTheme.RAISED, DeepNoteTheme.BORDER);
+        keycap.setBorder(DeepNoteTheme.padding(3, 7, 3, 7));
+        JLabel keyText = new JLabel(keys);
+        keyText.setFont(DeepNoteTheme.SMALL_MEDIUM);
+        keyText.setForeground(DeepNoteTheme.TEXT_SECONDARY);
+        keycap.add(keyText);
+        keycap.setMaximumSize(keycap.getPreferredSize());
+        JLabel text = new JLabel(label);
+        text.setFont(DeepNoteTheme.SMALL);
+        text.setForeground(DeepNoteTheme.MUTED);
+        hint.add(keycap);
+        hint.add(Box.createHorizontalStrut(8));
+        hint.add(text);
+        return hint;
+    }
+
+    private JComponent recentCard(Note note) {
+        RoundedPanel card = new RoundedPanel(new BorderLayout(0, 6), 16, DeepNoteTheme.RAISED,
+                DeepNoteTheme.BORDER_SOFT);
+        card.setBorder(DeepNoteTheme.padding(16, 18, 16, 18));
+        card.setPreferredSize(new Dimension(300, 84));
+        card.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        JLabel title = new JLabel(note.title());
+        title.setFont(DeepNoteTheme.BODY_MEDIUM);
+        title.setForeground(DeepNoteTheme.TEXT);
+        JLabel preview = new JLabel(previewOf(note.content()));
+        preview.setFont(DeepNoteTheme.SMALL);
+        preview.setForeground(DeepNoteTheme.MUTED);
+        card.add(title, BorderLayout.NORTH);
+        card.add(preview, BorderLayout.CENTER);
+        card.addMouseListener(new MouseAdapter() {
+            @Override public void mouseEntered(MouseEvent event) { card.setStroke(DeepNoteTheme.ACCENT); }
+
+            @Override public void mouseExited(MouseEvent event) {
+                if (!card.contains(event.getPoint())) card.setStroke(DeepNoteTheme.BORDER_SOFT);
+            }
+
+            @Override public void mouseClicked(MouseEvent event) { openNote(noteService.readNote(note.path())); }
+        });
+        return card;
     }
 
     private JPanel buildStatusBar() {
         JPanel status = new JPanel(new BorderLayout());
-        status.setBackground(DeepNoteTheme.BACKGROUND);
-        status.setBorder(DeepNoteTheme.padding(8, 18, 8, 18));
-        JLabel left = new JLabel("LOCAL WORKSPACE");
-        left.setFont(DeepNoteTheme.LABEL);
+        status.setBackground(DeepNoteTheme.SIDEBAR);
+        status.setBorder(BorderFactory.createCompoundBorder(
+                DeepNoteTheme.divider(1, 0, 0, 0), DeepNoteTheme.padding(6, 16, 6, 16)));
+        JLabel left = new JLabel("Local workspace", dot(DeepNoteTheme.SUCCESS, 8), SwingConstants.LEFT);
+        left.setIconTextGap(8);
+        left.setFont(DeepNoteTheme.SMALL);
         left.setForeground(DeepNoteTheme.MUTED);
-        JLabel right = new JLabel("Ollama assistant · offline by default");
-        right.setFont(new Font("Segoe UI", Font.PLAIN, 11));
-        right.setForeground(DeepNoteTheme.MUTED);
+        JLabel right = new JLabel("Ollama · " + chatModelName);
+        right.setFont(DeepNoteTheme.SMALL);
+        right.setForeground(DeepNoteTheme.FAINT);
         status.add(left, BorderLayout.WEST);
         status.add(right, BorderLayout.EAST);
         return status;
     }
 
-    private void refreshNotes() {
-        List<Note> notes = noteService.listNotes();
-        noteListModel.clear();
-        notes.forEach(noteListModel::addElement);
-        noteCountLabel.setText(notes.size() + (notes.size() == 1 ? " note" : " notes"));
-        if (tabs.getTabCount() == 0) showHome();
+    // ---------------------------------------------------------------- shortcuts
+
+    private void installShortcuts() {
+        bind(KeyEvent.VK_N, "newNote", this::createNote);
+        bind(KeyEvent.VK_S, "saveNote", this::saveCurrent);
+        bind(KeyEvent.VK_K, "focusSearch", this::focusSearch);
+        bind(KeyEvent.VK_J, "toggleAssistant", this::toggleCurrentAssistant);
+        bind(KeyEvent.VK_W, "closeTab", () -> { if (selectedTab != null) closeTab(selectedTab); });
+        bind(KeyEvent.VK_B, "toggleSidebar", this::toggleSidebar);
     }
 
-    private void filterNotes() {
-        List<Note> results = searchService.search(noteService.listNotes(), searchField.getText());
-        noteListModel.clear();
-        results.forEach(noteListModel::addElement);
-        noteCountLabel.setText(results.size() + (results.size() == 1 ? " result" : " results"));
+    private void bind(int keyCode, String name, Runnable action) {
+        getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(keyCode, MOD), name);
+        getRootPane().getActionMap().put(name, new AbstractAction() {
+            @Override public void actionPerformed(java.awt.event.ActionEvent event) { action.run(); }
+        });
     }
 
-    private void showHome() { ((CardLayout) workspaceArea.getLayout()).show(workspaceArea, "home"); }
-    private void showTabs() { ((CardLayout) workspaceArea.getLayout()).show(workspaceArea, "tabs"); }
+    private void toggleSidebar() {
+        navigation.setVisible(!navigation.isVisible());
+        getContentPane().revalidate();
+        getContentPane().repaint();
+    }
+
+    private void focusSearch() {
+        if (!navigation.isVisible()) toggleSidebar();
+        searchField.requestFocusInWindow();
+        searchField.selectAll();
+    }
+
+    private void saveCurrent() { if (selectedTab != null) selectedTab.save(); }
+
+    private void toggleCurrentAssistant() {
+        if (selectedTab != null) selectedTab.toggleAssistant(!selectedTab.assistantHost.isVisible());
+    }
+
+    // ---------------------------------------------------------------- note list
+
+    private void reloadList() {
+        List<Note> all = noteService.listNotes();
+        String query = searchField.getText();
+        List<Note> shown = searchService.search(all, query);
+        syncingSelection = true;
+        try {
+            noteListModel.clear();
+            shown.forEach(noteListModel::addElement);
+        } finally {
+            syncingSelection = false;
+        }
+        boolean filtering = query != null && !query.isBlank();
+        noteCountLabel.setText(shown.size() + (filtering ? (shown.size() == 1 ? " result" : " results")
+                : (shown.size() == 1 ? " note" : " notes")));
+        syncListSelection();
+        rebuildHome(all);
+    }
+
+    private void syncListSelection() {
+        syncingSelection = true;
+        try {
+            noteList.clearSelection();
+            if (selectedTab == null) return;
+            for (int i = 0; i < noteListModel.size(); i++) {
+                if (noteListModel.get(i).path().equals(selectedTab.note.path())) {
+                    noteList.setSelectedIndex(i);
+                    noteList.ensureIndexIsVisible(i);
+                    return;
+                }
+            }
+        } finally {
+            syncingSelection = false;
+        }
+    }
+
+    private void setHoverIndex(int index) {
+        if (index == hoverIndex) return;
+        hoverIndex = index;
+        noteList.repaint();
+    }
+
+    // ---------------------------------------------------------------- tabs
+
+    private void showHome() {
+        navigation.setVisible(true);
+        ((CardLayout) contentCards.getLayout()).show(contentCards, "home");
+        syncListSelection();
+    }
+
+    private void showWorkspace() { ((CardLayout) contentCards.getLayout()).show(contentCards, "workspace"); }
 
     private void createNote() {
-        String title = JOptionPane.showInputDialog(this, "Give your note a title:", "New note", JOptionPane.PLAIN_MESSAGE);
+        String title = JOptionPane.showInputDialog(this, "Give your note a title:", "New note",
+                JOptionPane.PLAIN_MESSAGE);
         if (title == null) return;
         try {
             Note note = noteService.createNote(title);
-            refreshNotes();
+            reloadList();
             openNote(note);
         } catch (NoteStorageException exception) { showError(exception.getMessage()); }
     }
 
     private void openNote(Note note) {
         EditorTab existing = openTabs.get(note.path().toString());
-        if (existing != null) { tabs.setSelectedComponent(existing); showTabs(); return; }
-        EditorTab editorTab = new EditorTab(note);
-        openTabs.put(note.path().toString(), editorTab);
-        tabs.addTab(note.title(), editorTab);
-        tabs.setTabComponentAt(tabs.indexOfComponent(editorTab), tabHeader(editorTab));
-        tabs.setSelectedComponent(editorTab);
-        showTabs();
+        if (existing != null) {
+            selectTab(existing);
+            return;
+        }
+        EditorTab tab = new EditorTab(note);
+        openTabs.put(note.path().toString(), tab);
+        tabOrder.add(tab);
+        tabStrip.add(tab.chipHolder);
+        editorStack.add(tab, tab.id);
+        selectTab(tab);
     }
 
-    private JPanel tabHeader(EditorTab editorTab) {
-        JPanel header = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
-        header.setOpaque(false);
-        editorTab.tabTitle = new JLabel(editorTab.note.title());
-        editorTab.tabTitle.setForeground(DeepNoteTheme.TEXT);
-        editorTab.tabTitle.setFont(DeepNoteTheme.BODY);
-        JLabel document = new JLabel(new DeepNoteIcon(DeepNoteIcon.Kind.DOCUMENT, DeepNoteTheme.MUTED));
-        JButton close = iconButton(new DeepNoteIcon(DeepNoteIcon.Kind.CLOSE, DeepNoteTheme.MUTED), "Close note");
-        close.addActionListener(event -> closeTab(editorTab));
-        header.add(document);
-        header.add(editorTab.tabTitle);
-        header.add(close);
-        return header;
+    private void selectTab(EditorTab tab) {
+        selectedTab = tab;
+        ((CardLayout) editorStack.getLayout()).show(editorStack, tab.id);
+        tabOrder.forEach(other -> other.chip.setSelectedState(other == tab));
+        showWorkspace();
+        syncListSelection();
+        tabStrip.revalidate();
+        tabStrip.repaint();
+        SwingUtilities.invokeLater(() -> {
+            tab.chipHolder.scrollRectToVisible(new Rectangle(0, 0, tab.chipHolder.getWidth(),
+                    tab.chipHolder.getHeight()));
+            tab.editor.requestFocusInWindow();
+        });
     }
 
     private void closeTab(EditorTab tab) {
-        if (tab.isDirty()) {
-            int choice = JOptionPane.showConfirmDialog(this, "Save changes to “" + tab.note.title() + "” before closing?", "Unsaved changes", JOptionPane.YES_NO_CANCEL_OPTION);
-            if (choice == JOptionPane.CANCEL_OPTION) return;
+        if (tab.dirty) {
+            selectTab(tab);
+            int choice = JOptionPane.showConfirmDialog(this,
+                    "Save changes to “" + tab.note.title() + "” before closing?", "Unsaved changes",
+                    JOptionPane.YES_NO_CANCEL_OPTION);
+            if (choice == JOptionPane.CANCEL_OPTION || choice == JOptionPane.CLOSED_OPTION) return;
             if (choice == JOptionPane.YES_OPTION && !tab.save()) return;
         }
-        openTabs.remove(tab.note.path().toString());
-        tabs.remove(tab);
-        if (tabs.getTabCount() == 0) showHome();
+        removeTab(tab);
     }
 
-    private void updateSelectionFromTab() {
-        Component component = tabs.getSelectedComponent();
-        if (component instanceof EditorTab tab) noteList.setSelectedValue(noteService.readNote(tab.note.path()), true);
+    private void removeTab(EditorTab tab) {
+        int index = tabOrder.indexOf(tab);
+        tabOrder.remove(tab);
+        openTabs.remove(tab.note.path().toString());
+        tabStrip.remove(tab.chipHolder);
+        editorStack.remove(tab);
+        tabStrip.revalidate();
+        tabStrip.repaint();
+        if (selectedTab != tab) return;
+        selectedTab = null;
+        if (tabOrder.isEmpty()) showHome();
+        else selectTab(tabOrder.get(Math.min(index, tabOrder.size() - 1)));
     }
 
     private void closeApplication() {
-        for (EditorTab tab : List.copyOf(openTabs.values())) {
-            if (!tab.isDirty()) continue;
-            int choice = JOptionPane.showConfirmDialog(this, "Save changes to “" + tab.note.title() + "” before closing?", "Unsaved changes", JOptionPane.YES_NO_CANCEL_OPTION);
-            if (choice == JOptionPane.CANCEL_OPTION) return;
+        for (EditorTab tab : List.copyOf(tabOrder)) {
+            if (!tab.dirty) continue;
+            selectTab(tab);
+            int choice = JOptionPane.showConfirmDialog(this,
+                    "Save changes to “" + tab.note.title() + "” before closing?", "Unsaved changes",
+                    JOptionPane.YES_NO_CANCEL_OPTION);
+            if (choice == JOptionPane.CANCEL_OPTION || choice == JOptionPane.CLOSED_OPTION) return;
             if (choice == JOptionPane.YES_OPTION && !tab.save()) return;
         }
         dispose();
     }
 
-    private void showError(String message) { JOptionPane.showMessageDialog(this, message, "DeepNote", JOptionPane.ERROR_MESSAGE); }
+    private void showError(String message) {
+        JOptionPane.showMessageDialog(this, message, "DeepNote", JOptionPane.ERROR_MESSAGE);
+    }
 
-    private JButton actionButton(String text, Icon icon, ButtonStyle style) {
-        JButton button = new JButton(text, icon);
-        button.setFont(DeepNoteTheme.BODY);
-        button.setIconTextGap(8);
-        button.setFocusPainted(false);
-        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        button.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
-        button.setMargin(new Insets(0, 0, 0, 0));
-        button.putClientProperty("JButton.buttonType", "roundRect");
-        if (style == ButtonStyle.PRIMARY) {
-            button.setBackground(DeepNoteTheme.ACCENT);
-            button.setForeground(Color.WHITE);
-        } else if (style == ButtonStyle.DANGER) {
-            button.setBackground(DeepNoteTheme.SURFACE);
-            button.setForeground(DeepNoteTheme.DANGER);
-        } else {
-            button.setBackground(DeepNoteTheme.ELEVATED);
-            button.setForeground(DeepNoteTheme.TEXT);
+    // ---------------------------------------------------------------- helpers
+
+    private static Icon dot(Color color, int diameter) {
+        return new Icon() {
+            @Override public void paintIcon(Component component, Graphics graphics, int x, int y) {
+                Graphics2D g = (Graphics2D) graphics.create();
+                DeepNoteTheme.smooth(g);
+                g.setColor(color);
+                g.fillOval(x, y, diameter, diameter);
+                g.dispose();
+            }
+
+            @Override public int getIconWidth() { return diameter; }
+            @Override public int getIconHeight() { return diameter; }
+        };
+    }
+
+    private static String previewOf(String content) {
+        for (String line : content.split("\\R", 40)) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
+            return trimmed.length() > 58 ? trimmed.substring(0, 58) + "…" : trimmed;
         }
-        return button;
+        return "Empty note";
     }
 
-    private JButton iconButton(Icon icon, String tooltip) {
-        JButton button = new JButton(icon);
-        button.setToolTipText(tooltip);
-        button.setFocusPainted(false);
-        button.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
-        button.setContentAreaFilled(false);
-        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        return button;
+    private static long lastModified(Path path) {
+        try {
+            return Files.getLastModifiedTime(path).toMillis();
+        } catch (IOException exception) {
+            return 0L; // A file that cannot be inspected simply sorts last.
+        }
     }
 
-    private enum ButtonStyle { PRIMARY, GHOST, DANGER }
+    private static JPanel hbox(int gap, Component... items) {
+        JPanel box = new JPanel();
+        box.setOpaque(false);
+        box.setLayout(new BoxLayout(box, BoxLayout.X_AXIS));
+        for (int i = 0; i < items.length; i++) {
+            if (i > 0) box.add(Box.createHorizontalStrut(gap));
+            box.add(items[i]);
+        }
+        return box;
+    }
 
-    private static final class NoteCellRenderer extends JPanel implements ListCellRenderer<Note> {
+    // ---------------------------------------------------------------- note list cell
+
+    private final class NoteCellRenderer extends JPanel implements ListCellRenderer<Note> {
         private final JLabel title = new JLabel();
-        private final JLabel metadata = new JLabel("TXT note");
+        private final JLabel preview = new JLabel();
+        private boolean selected;
+        private boolean hovered;
 
         NoteCellRenderer() {
+            setOpaque(false);
             setLayout(new BorderLayout(0, 3));
-            setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
-            title.setFont(DeepNoteTheme.BODY);
-            metadata.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            setBorder(DeepNoteTheme.padding(12, 14, 12, 14));
+            title.setFont(DeepNoteTheme.BODY_MEDIUM);
+            preview.setFont(DeepNoteTheme.SMALL);
             add(title, BorderLayout.CENTER);
-            add(metadata, BorderLayout.SOUTH);
+            add(preview, BorderLayout.SOUTH);
         }
 
-        @Override public Component getListCellRendererComponent(JList<? extends Note> list, Note note, int index, boolean selected, boolean focused) {
-            setOpaque(true);
-            setBackground(selected ? Color.decode("#292849") : DeepNoteTheme.SURFACE);
+        @Override public Component getListCellRendererComponent(JList<? extends Note> list, Note note, int index,
+                                                                boolean isSelected, boolean focused) {
+            selected = isSelected;
+            hovered = index == hoverIndex;
             title.setText(note.title());
-            title.setForeground(selected ? Color.WHITE : DeepNoteTheme.TEXT);
-            metadata.setForeground(selected ? Color.decode("#C5C3FF") : DeepNoteTheme.MUTED);
+            title.setForeground(DeepNoteTheme.TEXT);
+            preview.setText(previewOf(note.content()));
+            preview.setForeground(isSelected ? DeepNoteTheme.ACCENT_TEXT : DeepNoteTheme.MUTED);
             return this;
+        }
+
+        @Override protected void paintComponent(Graphics graphics) {
+            Graphics2D g = (Graphics2D) graphics.create();
+            DeepNoteTheme.smooth(g);
+            if (selected || hovered) {
+                g.setColor(selected ? DeepNoteTheme.ACCENT_SOFT : DeepNoteTheme.RAISED);
+                g.fillRoundRect(0, 2, getWidth(), getHeight() - 4, 14, 14);
+            }
+            g.dispose();
+            super.paintComponent(graphics);
         }
     }
 
+    // ---------------------------------------------------------------- tab chip
+
+    private final class TabChip extends RoundedPanel {
+        private final EditorTab tab;
+        private final JLabel title = new JLabel();
+        private final JLabel dirtyDot = new JLabel(dot(DeepNoteTheme.WARNING, 7));
+        private boolean selected;
+        private boolean hovered;
+
+        TabChip(EditorTab tab) {
+            super(new BorderLayout(8, 0), 12, null, null);
+            this.tab = tab;
+            setBorder(DeepNoteTheme.padding(5, 12, 5, 6));
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            title.setFont(DeepNoteTheme.BODY_MEDIUM);
+            dirtyDot.setVisible(false);
+            ModernButton close = ModernButton.iconOnly(DeepNoteIcon.Kind.CLOSE, "Close (" + MOD_LABEL + "+W)",
+                    ModernButton.Variant.GHOST, 12);
+            close.addActionListener(event -> closeTab(tab));
+            JLabel document = new JLabel(new DeepNoteIcon(DeepNoteIcon.Kind.DOCUMENT, DeepNoteTheme.MUTED, 15));
+            add(document, BorderLayout.WEST);
+            add(title, BorderLayout.CENTER);
+            add(hbox(4, dirtyDot, close), BorderLayout.EAST);
+            addMouseListener(new MouseAdapter() {
+                @Override public void mouseEntered(MouseEvent event) { hovered = true; restyle(); }
+
+                @Override public void mouseExited(MouseEvent event) {
+                    if (contains(event.getPoint())) return;
+                    hovered = false;
+                    restyle();
+                }
+
+                @Override public void mouseClicked(MouseEvent event) { selectTab(tab); }
+            });
+            setTitle(tab.note.title());
+            restyle();
+        }
+
+        void setTitle(String text) { title.setText(text); }
+        void setDirty(boolean dirty) { dirtyDot.setVisible(dirty); }
+
+        void setSelectedState(boolean value) {
+            selected = value;
+            restyle();
+        }
+
+        private void restyle() {
+            setFill(selected ? DeepNoteTheme.RAISED : hovered ? DeepNoteTheme.HOVER : null);
+            setStroke(selected ? DeepNoteTheme.BORDER : null);
+            title.setForeground(selected ? DeepNoteTheme.TEXT : DeepNoteTheme.MUTED);
+        }
+    }
+
+    // ---------------------------------------------------------------- editor tab
+
     private final class EditorTab extends JPanel {
-        private Note note;
-        private final JTextArea editor = new JTextArea();
-        private final JPanel assistantHost = new JPanel(new BorderLayout());
-        private final AIAssistantPanel assistantPanel;
-        private JLabel tabTitle;
-        private boolean dirty;
+        final String id = UUID.randomUUID().toString();
+        final JTextArea editor;
+        final JPanel assistantHost = new JPanel(new BorderLayout());
+        final AIAssistantPanel assistantPanel;
+        final TabChip chip;
+        final JPanel chipHolder = new JPanel(new BorderLayout()) {
+            @Override public Dimension getMaximumSize() { return getPreferredSize(); }
+        };
+        private final ScrollableColumn column = new ScrollableColumn(new BorderLayout(0, 22), true);
+        private final JLabel titleLabel = new JLabel();
+        private final JLabel metaLabel = new JLabel();
+        private final JLabel statusLabel = new JLabel();
+        private final ModernButton askButton = new ModernButton("Ask AI", DeepNoteIcon.Kind.SPARK,
+                ModernButton.Variant.SOFT);
+        Note note;
+        boolean dirty;
 
         EditorTab(Note note) {
             this.note = note;
             setLayout(new BorderLayout());
-            setBackground(DeepNoteTheme.BACKGROUND);
-            editor.setText(note.content());
+            setBackground(DeepNoteTheme.CANVAS);
+            chip = new TabChip(this);
+            chipHolder.setOpaque(false);
+            chipHolder.setBorder(DeepNoteTheme.padding(0, 0, 0, 6));
+            chipHolder.add(chip, BorderLayout.CENTER);
+
+            editor = new JTextArea(note.content()) {
+                @Override protected void paintComponent(Graphics graphics) {
+                    super.paintComponent(graphics);
+                    if (getDocument().getLength() > 0) return;
+                    Graphics2D g = (Graphics2D) graphics.create();
+                    DeepNoteTheme.smooth(g);
+                    g.setColor(DeepNoteTheme.FAINT);
+                    g.setFont(getFont());
+                    g.drawString("Start writing…", getInsets().left, getInsets().top + g.getFontMetrics().getAscent());
+                    g.dispose();
+                }
+            };
             editor.setLineWrap(true);
             editor.setWrapStyleWord(true);
-            editor.setFont(DeepNoteTheme.BODY_LARGE);
+            editor.setTabSize(4);
+            editor.setFont(DeepNoteTheme.EDITOR);
             editor.setForeground(DeepNoteTheme.TEXT);
-            editor.setBackground(DeepNoteTheme.BACKGROUND);
-            editor.setCaretColor(DeepNoteTheme.ACCENT_HOVER);
-            editor.setSelectionColor(Color.decode("#3A3B70"));
-            editor.setSelectedTextColor(DeepNoteTheme.TEXT);
-            editor.setMargin(new Insets(26, 34, 40, 34));
+            editor.setBackground(DeepNoteTheme.CANVAS);
+            editor.setCaretColor(DeepNoteTheme.ACCENT_TEXT);
+            editor.setBorder(null);
+
             assistantPanel = new AIAssistantPanel(assistantService, editor::getText, () -> toggleAssistant(false));
             assistantPanel.setNote(note.title());
             assistantHost.add(assistantPanel, BorderLayout.CENTER);
-            assistantHost.setPreferredSize(new Dimension(360, 0));
-            assistantHost.setVisible(false);
+            assistantHost.setPreferredSize(new Dimension(ASSISTANT_WIDTH, 0));
             assistantHost.setBorder(DeepNoteTheme.divider(0, 1, 0, 0));
+            assistantHost.setVisible(false);
 
-            JPanel toolbar = new JPanel(new BorderLayout(12, 0));
-            toolbar.setBackground(DeepNoteTheme.SURFACE);
-            toolbar.setBorder(BorderFactory.createCompoundBorder(DeepNoteTheme.divider(0, 0, 1, 0), DeepNoteTheme.padding(10, 18, 10, 18)));
-            JPanel descriptor = new JPanel();
-            descriptor.setOpaque(false);
-            descriptor.setLayout(new BoxLayout(descriptor, BoxLayout.Y_AXIS));
-            JLabel noteType = new JLabel("PLAIN TEXT NOTE");
-            noteType.setFont(DeepNoteTheme.LABEL);
-            noteType.setForeground(DeepNoteTheme.MUTED);
-            JLabel notePath = new JLabel(note.title());
-            notePath.setFont(DeepNoteTheme.BODY);
-            notePath.setForeground(DeepNoteTheme.TEXT);
-            descriptor.add(noteType);
-            descriptor.add(notePath);
-            toolbar.add(descriptor, BorderLayout.WEST);
-            JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
-            JButton save = actionButton("Save", new DeepNoteIcon(DeepNoteIcon.Kind.SAVE, DeepNoteTheme.TEXT), ButtonStyle.GHOST);
-            JButton rename = actionButton("Rename", new DeepNoteIcon(DeepNoteIcon.Kind.EDIT, DeepNoteTheme.TEXT), ButtonStyle.GHOST);
-            JButton delete = actionButton("Delete", new DeepNoteIcon(DeepNoteIcon.Kind.TRASH, DeepNoteTheme.DANGER), ButtonStyle.DANGER);
-            JButton ask = actionButton("Ask AI", new DeepNoteIcon(DeepNoteIcon.Kind.SPARK, Color.WHITE), ButtonStyle.PRIMARY);
-            save.addActionListener(event -> save());
-            rename.addActionListener(event -> rename());
-            delete.addActionListener(event -> delete());
-            ask.addActionListener(event -> toggleAssistant(!assistantHost.isVisible()));
-            actions.add(save); actions.add(rename); actions.add(delete); actions.add(ask);
-            toolbar.add(actions, BorderLayout.EAST);
-            JScrollPane editorScroll = new JScrollPane(editor);
-            editorScroll.setBorder(null);
-            editorScroll.getViewport().setBackground(DeepNoteTheme.BACKGROUND);
-            add(toolbar, BorderLayout.NORTH);
-            add(editorScroll, BorderLayout.CENTER);
+            add(buildToolbar(), BorderLayout.NORTH);
+            add(buildDocument(), BorderLayout.CENTER);
             add(assistantHost, BorderLayout.EAST);
+            refreshHeader();
+            refreshStatus();
             editor.getDocument().addDocumentListener(new DocumentListener() {
                 @Override public void insertUpdate(DocumentEvent event) { markDirty(); }
                 @Override public void removeUpdate(DocumentEvent event) { markDirty(); }
@@ -415,19 +741,112 @@ public class MainWindow extends JFrame {
             });
         }
 
-        private void toggleAssistant(boolean show) {
-            assistantHost.setVisible(show);
-            revalidate();
-            repaint();
+        private JPanel buildToolbar() {
+            JPanel toolbar = new JPanel(new BorderLayout(12, 0));
+            toolbar.setBackground(DeepNoteTheme.CANVAS);
+            toolbar.setBorder(DeepNoteTheme.padding(10, 14, 10, 16));
+
+            ModernButton sidebar = ModernButton.iconOnly(DeepNoteIcon.Kind.SIDEBAR_LEFT,
+                    "Toggle sidebar (" + MOD_LABEL + "+B)", ModernButton.Variant.GHOST, 18);
+            sidebar.addActionListener(event -> toggleSidebar());
+            statusLabel.setFont(DeepNoteTheme.SMALL);
+            statusLabel.setForeground(DeepNoteTheme.MUTED);
+            statusLabel.setIconTextGap(8);
+            toolbar.add(hbox(10, sidebar, statusLabel), BorderLayout.WEST);
+
+            ModernButton save = new ModernButton("Save", DeepNoteIcon.Kind.SAVE, ModernButton.Variant.SECONDARY);
+            save.setToolTipText("Save (" + MOD_LABEL + "+S)");
+            ModernButton rename = ModernButton.iconOnly(DeepNoteIcon.Kind.EDIT, "Rename note",
+                    ModernButton.Variant.GHOST, 18);
+            ModernButton delete = ModernButton.iconOnly(DeepNoteIcon.Kind.TRASH, "Delete note",
+                    ModernButton.Variant.DANGER, 18);
+            askButton.setToolTipText("Ask AI about this note (" + MOD_LABEL + "+J)");
+            save.addActionListener(event -> save());
+            rename.addActionListener(event -> rename());
+            delete.addActionListener(event -> delete());
+            askButton.addActionListener(event -> toggleAssistant(!assistantHost.isVisible()));
+            toolbar.add(hbox(6, rename, delete, Box.createHorizontalStrut(4), save, askButton), BorderLayout.EAST);
+            return toolbar;
         }
 
-        boolean isDirty() { return dirty; }
-        private void markDirty() { dirty = true; updateTabTitle(); }
-        private void updateTabTitle() { if (tabTitle != null) tabTitle.setText(note.title() + (dirty ? " *" : "")); }
-        boolean save() {
-            try { note = noteService.saveNote(note, editor.getText()); dirty = false; updateTabTitle(); refreshNotes(); return true; }
-            catch (NoteStorageException exception) { showError(exception.getMessage()); return false; }
+        private JScrollPane buildDocument() {
+            JPanel titleBlock = new JPanel();
+            titleBlock.setOpaque(false);
+            titleBlock.setLayout(new BoxLayout(titleBlock, BoxLayout.Y_AXIS));
+            titleLabel.setFont(DeepNoteTheme.EDITOR_TITLE);
+            titleLabel.setForeground(DeepNoteTheme.TEXT);
+            titleLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+            metaLabel.setFont(DeepNoteTheme.SMALL);
+            metaLabel.setForeground(DeepNoteTheme.MUTED);
+            metaLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+            titleBlock.add(titleLabel);
+            titleBlock.add(Box.createVerticalStrut(8));
+            titleBlock.add(metaLabel);
+            column.add(titleBlock, BorderLayout.NORTH);
+            column.add(editor, BorderLayout.CENTER);
+
+            JScrollPane scroll = new JScrollPane(column);
+            scroll.setBorder(null);
+            scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+            scroll.getViewport().setBackground(DeepNoteTheme.CANVAS);
+            scroll.getVerticalScrollBar().setUnitIncrement(18);
+            scroll.getViewport().addComponentListener(new ComponentAdapter() {
+                @Override public void componentResized(ComponentEvent event) {
+                    int pad = Math.max(32, (scroll.getViewport().getWidth() - READING_WIDTH) / 2);
+                    column.setBorder(DeepNoteTheme.padding(30, pad, 80, pad));
+                }
+            });
+            return scroll;
         }
+
+        void toggleAssistant(boolean show) {
+            assistantHost.setVisible(show);
+            askButton.setActive(show);
+            revalidate();
+            repaint();
+            if (show) SwingUtilities.invokeLater(assistantPanel::focusInput);
+        }
+
+        private void refreshHeader() {
+            titleLabel.setText(note.title());
+            chip.setTitle(note.title());
+            updateMeta();
+        }
+
+        private void updateMeta() {
+            String text = editor.getText();
+            int words = text.isBlank() ? 0 : text.trim().split("\\s+").length;
+            int minutes = Math.max(1, (int) Math.ceil(words / 220.0));
+            metaLabel.setText(words + (words == 1 ? " word" : " words") + "  ·  " + text.length() + " characters"
+                    + (words > 0 ? "  ·  " + minutes + " min read" : ""));
+        }
+
+        private void refreshStatus() {
+            statusLabel.setIcon(dot(dirty ? DeepNoteTheme.WARNING : DeepNoteTheme.SUCCESS, 8));
+            statusLabel.setText(dirty ? "Unsaved changes" : "Saved");
+            chip.setDirty(dirty);
+        }
+
+        private void markDirty() {
+            updateMeta();
+            if (dirty) return;
+            dirty = true;
+            refreshStatus();
+        }
+
+        boolean save() {
+            try {
+                note = noteService.saveNote(note, editor.getText());
+                dirty = false;
+                refreshStatus();
+                reloadList();
+                return true;
+            } catch (NoteStorageException exception) {
+                showError(exception.getMessage());
+                return false;
+            }
+        }
+
         void rename() {
             String title = JOptionPane.showInputDialog(this, "New title:", note.title());
             if (title == null) return;
@@ -436,15 +855,20 @@ public class MainWindow extends JFrame {
                 note = noteService.renameNote(note, title);
                 openTabs.remove(old.path().toString());
                 openTabs.put(note.path().toString(), this);
-                updateTabTitle();
                 assistantPanel.setNote(note.title());
-                refreshNotes();
+                refreshHeader();
+                reloadList();
             } catch (NoteStorageException exception) { showError(exception.getMessage()); }
         }
+
         void delete() {
-            if (JOptionPane.showConfirmDialog(this, "Delete “" + note.title() + "”?", "Delete note", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
-            try { noteService.deleteNote(note); openTabs.remove(note.path().toString()); tabs.remove(this); refreshNotes(); }
-            catch (NoteStorageException exception) { showError(exception.getMessage()); }
+            if (JOptionPane.showConfirmDialog(this, "Delete “" + note.title() + "”? This cannot be undone.",
+                    "Delete note", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
+            try {
+                noteService.deleteNote(note);
+                removeTab(this);
+                reloadList();
+            } catch (NoteStorageException exception) { showError(exception.getMessage()); }
         }
     }
 }

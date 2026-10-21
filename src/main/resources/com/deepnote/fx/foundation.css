@@ -1,32 +1,40 @@
-.foundation-root {
-    -fx-background-color: #0D1016;
-    -fx-padding: 48px;
+.root {
+    -primary: #4C8DFF; -secondary: #8AB4FF; -tertiary: #A6C8FF;
+    -background: #0D0F12; -surface: #1B1D22; -border: #30343D;
+    -text-primary: #F1F3F6; -text-muted: #969DA9;
+    -fx-font-family: "Inter", "Segoe UI", sans-serif; -fx-background-color: -background; -fx-text-fill: -text-primary;
 }
-
-.foundation-title {
-    -fx-text-fill: #8B8CF8;
-    -fx-font-size: 16px;
-    -fx-font-weight: bold;
-}
-
-.foundation-heading {
-    -fx-text-fill: #EDF1F7;
-    -fx-font-size: 30px;
-    -fx-font-weight: bold;
-}
-
-.foundation-copy {
-    -fx-text-fill: #9AA6B8;
-    -fx-font-size: 14px;
-    -fx-text-alignment: center;
-}
-
-.foundation-status {
-    -fx-text-fill: #5ED6A0;
-    -fx-font-size: 13px;
-    -fx-padding: 12px 18px;
-    -fx-background-color: #141923;
-    -fx-background-radius: 8px;
-    -fx-border-color: #2A3240;
-    -fx-border-radius: 8px;
-}
+.app-root, .home-page, .editor-column { -fx-background-color: -background; }
+.app-header { -fx-padding: 12 22; -fx-border-color: -border; -fx-border-width: 0 0 1 0; }
+.brand { -fx-text-fill: -text-primary; -fx-font-size: 14px; -fx-font-weight: bold; }
+.mono-label, .status-line { -fx-font-family: "JetBrains Mono", "Consolas", monospace; -fx-font-size: 10px; -fx-text-fill: -text-muted; }
+.tab-bar { -fx-padding: 0 18; -fx-background-color: -background; }
+.workspace-tabs, .workspace-tabs .tab-header-area { -fx-background-color: transparent; }
+.workspace-tabs .tab { -fx-background-color: transparent; -fx-padding: 13 16; }
+.workspace-tabs .tab:selected { -fx-background-color: -surface; -fx-border-color: -primary; -fx-border-width: 0 0 2 0; }
+.workspace-tabs .tab-label { -fx-text-fill: -text-muted; }
+.workspace-tabs .tab:selected .tab-label { -fx-text-fill: -text-primary; }
+.status-line { -fx-padding: 8 22; -fx-border-color: -border; -fx-border-width: 1 0 0 0; }
+.page-title { -fx-text-fill: -text-primary; -fx-font-size: 34px; -fx-font-weight: bold; }
+.accent-text { -fx-text-fill: -primary; -fx-font-size: 20px; }
+.search-field, .composer { -fx-background-color: -surface; -fx-text-fill: -text-primary; -fx-prompt-text-fill: -text-muted; -fx-border-color: -border; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 12; }
+.primary-button { -fx-background-color: -primary; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 7; -fx-padding: 10 15; }
+.primary-button:hover { -fx-background-color: -secondary; }
+.secondary-button, .text-button, .danger-button, .icon-button, .view-toggle { -fx-background-color: -surface; -fx-text-fill: -text-primary; -fx-border-color: -border; -fx-border-radius: 6; -fx-background-radius: 6; -fx-padding: 9 12; }
+.danger-button { -fx-text-fill: #FF9B9B; }
+.icon-button { -fx-padding: 8 11; }
+.view-toggle:selected { -fx-background-color: -primary; -fx-text-fill: white; }
+.section-label, .card-tag { -fx-font-family: "JetBrains Mono", "Consolas", monospace; -fx-font-size: 10px; -fx-text-fill: -text-muted; -fx-font-weight: bold; }
+.note-card { -fx-background-color: -surface; -fx-border-color: -border; -fx-border-radius: 10; -fx-background-radius: 10; -fx-padding: 16; -fx-pref-width: 280; -fx-pref-height: 155; }
+.note-card:hover { -fx-border-color: -secondary; }
+.card-tag { -fx-text-fill: -secondary; }
+.card-title, .panel-title { -fx-text-fill: -text-primary; -fx-font-size: 16px; -fx-font-weight: bold; }
+.card-preview, .editor-meta, .empty-state { -fx-text-fill: -text-muted; -fx-font-size: 12px; }
+.editor-title { -fx-text-fill: -text-primary; -fx-font-size: 30px; -fx-font-weight: bold; }
+.note-editor { -fx-background-color: -background; -fx-text-fill: -text-primary; -fx-font-family: "Inter", "Segoe UI", sans-serif; -fx-font-size: 16px; -fx-highlight-fill: -primary; -fx-highlight-text-fill: white; -fx-border-color: transparent; }
+.note-editor .content { -fx-background-color: -background; -fx-padding: 8 0; }
+.ai-panel { -fx-background-color: -surface; -fx-border-color: -border; -fx-border-width: 1 0 0 1; }
+.message-list { -fx-background-color: transparent; -fx-control-inner-background: -surface; -fx-border-color: transparent; }
+.message-list .list-cell { -fx-background-color: -surface; -fx-text-fill: -text-primary; -fx-padding: 12; }
+.scroll-pane, .scroll-pane > .viewport { -fx-background-color: -background; }
+.label { -fx-text-fill: -text-primary; }

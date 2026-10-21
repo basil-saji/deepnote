@@ -30,13 +30,12 @@ import java.util.UUID;
 
 /**
  * Main DeepNote workspace shell:
- * Navigation sidebar, responsive tabbed writing surface, adjustable AI assistant split pane,
+ * Homepage-led note browser, responsive tabbed writing surface, adjustable AI assistant split pane,
  * and a cohesive 2026 dark graphite aesthetic.
  */
 public class MainWindow extends JFrame {
     private static final int MOD = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
     private static final String MOD_LABEL = MOD == InputEvent.META_DOWN_MASK ? "⌘" : "Ctrl";
-    private static final int DEFAULT_SIDEBAR_WIDTH = 270;
     private static final int DEFAULT_ASSISTANT_WIDTH = 390;
     private static final int READING_WIDTH = 780;
 
@@ -44,26 +43,8 @@ public class MainWindow extends JFrame {
     private final LocalSearchService searchService = new LocalSearchService();
     private final AIAssistantService assistantService;
     private final String chatModelName;
-    private final Path notesDir;
-
-    private final DefaultListModel<Note> noteListModel = new DefaultListModel<>();
-    private final JList<Note> noteList = new JList<>(noteListModel) {
-        @Override protected void paintComponent(Graphics graphics) {
-            super.paintComponent(graphics);
-            if (getModel().getSize() > 0) return;
-            Graphics2D g = (Graphics2D) graphics.create();
-            DeepNoteTheme.smooth(g);
-            g.setFont(DeepNoteTheme.SMALL);
-            g.setColor(DeepNoteTheme.FAINT);
-            String message = searchField.getText().isBlank() ? "No notes yet" : "No matching notes";
-            int width = g.getFontMetrics().stringWidth(message);
-            g.drawString(message, (getWidth() - width) / 2, 48);
-            g.dispose();
-        }
-    };
 
     private final JTextField searchField = new JTextField();
-    private final JLabel noteCountLabel = new JLabel();
     private final JPanel contentCards = new JPanel(new CardLayout());
     private final JPanel tabStrip = new JPanel();
     private final JPanel editorStack = new JPanel(new CardLayout());
@@ -71,17 +52,10 @@ public class MainWindow extends JFrame {
     private final List<EditorTab> tabOrder = new ArrayList<>();
     private final Map<String, EditorTab> openTabs = new HashMap<>();
 
-    private JSplitPane mainSplitPane;
-    private JPanel navigation;
     private EditorTab selectedTab;
-    private boolean syncingSelection;
-    private int hoverIndex = -1;
-    private int lastSidebarWidth = DEFAULT_SIDEBAR_WIDTH;
-    private boolean sidebarVisible = true;
 
     public MainWindow(AppConfig config) {
         super("DeepNote");
-        this.notesDir = config.notesDirectory();
         this.chatModelName = config.chatModelName();
         this.noteService = new NoteService(config.notesDirectory());
         this.assistantService = new AIAssistantService(
@@ -106,32 +80,17 @@ public class MainWindow extends JFrame {
 
     private void buildUi() {
         getContentPane().setBackground(DeepNoteTheme.BACKGROUND);
-        getRootPane().putClientProperty("JRootPane.titleBarBackground", DeepNoteTheme.SIDEBAR);
+        getRootPane().putClientProperty("JRootPane.titleBarBackground", DeepNoteTheme.HEADER);
         getRootPane().putClientProperty("JRootPane.titleBarForeground", DeepNoteTheme.MUTED);
         setLayout(new BorderLayout());
-
-        navigation = buildNavigation();
 
         contentCards.setBackground(DeepNoteTheme.CANVAS);
         contentCards.add(buildWorkspace(), "workspace");
         contentCards.add(buildHome(), "home");
         showHome();
 
-        mainSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, navigation, contentCards);
-        mainSplitPane.setDividerSize(1);
-        mainSplitPane.setDividerLocation(DEFAULT_SIDEBAR_WIDTH);
-        mainSplitPane.setContinuousLayout(true);
-        mainSplitPane.setBorder(null);
-        mainSplitPane.setBackground(DeepNoteTheme.BORDER_SUBTLE);
-
-        add(mainSplitPane, BorderLayout.CENTER);
+        add(contentCards, BorderLayout.CENTER);
         add(buildStatusBar(), BorderLayout.SOUTH);
-
-        noteList.addListSelectionListener(event -> {
-            if (event.getValueIsAdjusting() || syncingSelection) return;
-            Note chosen = noteList.getSelectedValue();
-            if (chosen != null) openNote(noteService.readNote(chosen.path()));
-        });
 
         searchField.getDocument().addDocumentListener(new DocumentListener() {
             @Override public void insertUpdate(DocumentEvent event) { reloadList(); }
@@ -142,156 +101,12 @@ public class MainWindow extends JFrame {
         installShortcuts();
     }
 
-    private JPanel buildNavigation() {
-        JPanel nav = new JPanel(new BorderLayout(0, 10));
-        nav.setBackground(DeepNoteTheme.SIDEBAR);
-        nav.setBorder(BorderFactory.createCompoundBorder(
-                DeepNoteTheme.divider(0, 0, 0, 1),
-                DeepNoteTheme.padding(14, 12, 12, 12)));
-        nav.setMinimumSize(new Dimension(200, 0));
-        nav.setPreferredSize(new Dimension(DEFAULT_SIDEBAR_WIDTH, 0));
-
-        // Top Brand & Actions Block
-        JPanel top = new JPanel(new GridBagLayout());
-        top.setOpaque(false);
-        GridBagConstraints c = new GridBagConstraints();
-        c.gridx = 0;
-        c.weightx = 1;
-        c.fill = GridBagConstraints.HORIZONTAL;
-
-        // Brand Identity Row
-        JPanel brand = new JPanel(new BorderLayout(8, 0));
-        brand.setOpaque(false);
-        brand.setBorder(DeepNoteTheme.padding(0, 4, 0, 0));
-
-        JPanel brandLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        brandLeft.setOpaque(false);
-        brandLeft.add(new IconBadge(DeepNoteIcon.Kind.SPARK, 26, true));
-
-        JLabel name = new JLabel("DeepNote");
-        name.setFont(DeepNoteTheme.TITLE_SM);
-        name.setForeground(DeepNoteTheme.TEXT);
-        brandLeft.add(name);
-
-        ModernButton hide = ModernButton.iconOnly(DeepNoteIcon.Kind.SIDEBAR_LEFT,
-                "Hide sidebar (" + MOD_LABEL + "+B)", ModernButton.Variant.GHOST, 16);
-        hide.addActionListener(event -> toggleSidebar());
-
-        brand.add(brandLeft, BorderLayout.WEST);
-        brand.add(hide, BorderLayout.EAST);
-        c.gridy = 0;
-        top.add(brand, c);
-
-        // Prominent yet restrained New Note action
-        ModernButton newNote = new ModernButton("New note", DeepNoteIcon.Kind.PLUS, ModernButton.Variant.SOFT);
-        newNote.setShortcutText(MOD_LABEL + "+N");
-        newNote.setToolTipText("Create a new note (" + MOD_LABEL + "+N)");
-        newNote.addActionListener(event -> createNote());
-        c.gridy = 1;
-        c.insets = new Insets(14, 0, 0, 0);
-        top.add(newNote, c);
-
-        // Search Field with keyboard shortcut hint
-        searchField.putClientProperty("JTextField.placeholderText", "Search notes…");
-        searchField.putClientProperty("JTextField.leadingIcon",
-                new DeepNoteIcon(DeepNoteIcon.Kind.SEARCH, DeepNoteTheme.MUTED, 15));
-        searchField.putClientProperty("JTextField.showClearButton", true);
-        searchField.setFont(DeepNoteTheme.SMALL);
-        searchField.setToolTipText("Search titles and content (" + MOD_LABEL + "+K)");
-
-        RoundedPanel searchBadge = new RoundedPanel(new BorderLayout(), 5, DeepNoteTheme.RAISED, DeepNoteTheme.BORDER_SUBTLE);
-        searchBadge.setBorder(DeepNoteTheme.padding(2, 6, 2, 6));
-        JLabel searchBadgeText = new JLabel(MOD_LABEL + " K");
-        searchBadgeText.setFont(DeepNoteTheme.KEYCAP);
-        searchBadgeText.setForeground(DeepNoteTheme.FAINT);
-        searchBadge.add(searchBadgeText, BorderLayout.CENTER);
-        searchField.putClientProperty("JTextField.trailingComponent", searchBadge);
-        searchField.putClientProperty("JTextField.leadingIcon",
-                new DeepNoteIcon(DeepNoteIcon.Kind.SEARCH, DeepNoteTheme.MUTED, 15));
-        searchField.putClientProperty("JTextField.showClearButton", true);
-        searchField.setFont(DeepNoteTheme.SMALL);
-        searchField.setToolTipText("Search titles and content (" + MOD_LABEL + "+K)");
-        c.gridy = 2;
-        c.insets = new Insets(10, 0, 0, 0);
-        top.add(searchField, c);
-
-        nav.add(top, BorderLayout.NORTH);
-
-        // Notes List Section
-        JPanel library = new JPanel(new BorderLayout(0, 6));
-        library.setOpaque(false);
-
-        JPanel libraryHeader = new JPanel(new BorderLayout());
-        libraryHeader.setOpaque(false);
-        libraryHeader.setBorder(DeepNoteTheme.padding(8, 6, 4, 6));
-
-        JLabel libraryLabel = new JLabel("ALL NOTES");
-        libraryLabel.setFont(DeepNoteTheme.LABEL);
-        libraryLabel.setForeground(DeepNoteTheme.FAINT);
-
-        noteCountLabel.setFont(DeepNoteTheme.SMALL);
-        noteCountLabel.setForeground(DeepNoteTheme.MUTED);
-
-        libraryHeader.add(libraryLabel, BorderLayout.WEST);
-        libraryHeader.add(noteCountLabel, BorderLayout.EAST);
-        library.add(libraryHeader, BorderLayout.NORTH);
-
-        noteList.setBackground(DeepNoteTheme.SIDEBAR);
-        noteList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        noteList.setFixedCellHeight(68);
-        noteList.setBorder(null);
-        noteList.setCellRenderer(new NoteCellRenderer());
-
-        MouseAdapter hover = new MouseAdapter() {
-            @Override public void mouseMoved(MouseEvent event) {
-                int index = noteList.locationToIndex(event.getPoint());
-                Rectangle bounds = index < 0 ? null : noteList.getCellBounds(index, index);
-                setHoverIndex(bounds != null && bounds.contains(event.getPoint()) ? index : -1);
-            }
-            @Override public void mouseExited(MouseEvent event) { setHoverIndex(-1); }
-        };
-        noteList.addMouseMotionListener(hover);
-        noteList.addMouseListener(hover);
-
-        JScrollPane scroll = new JScrollPane(noteList);
-        scroll.setBorder(null);
-        scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-        scroll.getViewport().setBackground(DeepNoteTheme.SIDEBAR);
-        scroll.setBackground(DeepNoteTheme.SIDEBAR);
-        scroll.getVerticalScrollBar().setUnitIncrement(16);
-        library.add(scroll, BorderLayout.CENTER);
-
-        nav.add(library, BorderLayout.CENTER);
-
-        // Footer / Status Area
-        JPanel footer = new JPanel(new BorderLayout());
-        footer.setOpaque(false);
-        footer.setBorder(DeepNoteTheme.padding(8, 4, 2, 4));
-
-        JLabel storageInfo = new JLabel("Local storage",
-                new DeepNoteIcon(DeepNoteIcon.Kind.LOCK, DeepNoteTheme.FAINT, 13), SwingConstants.LEFT);
-        storageInfo.setIconTextGap(6);
-        storageInfo.setFont(DeepNoteTheme.SMALL);
-        storageInfo.setForeground(DeepNoteTheme.MUTED);
-        storageInfo.setToolTipText("Notes directory: " + notesDir.toAbsolutePath());
-
-        JLabel formatBadge = new JLabel(".txt");
-        formatBadge.setFont(DeepNoteTheme.KEYCAP);
-        formatBadge.setForeground(DeepNoteTheme.FAINT);
-
-        footer.add(storageInfo, BorderLayout.WEST);
-        footer.add(formatBadge, BorderLayout.EAST);
-        nav.add(footer, BorderLayout.SOUTH);
-
-        return nav;
-    }
-
     private JPanel buildWorkspace() {
         JPanel workspace = new JPanel(new BorderLayout());
         workspace.setBackground(DeepNoteTheme.CANVAS);
 
         JPanel tabHeader = new JPanel(new BorderLayout());
-        tabHeader.setBackground(DeepNoteTheme.SIDEBAR);
+        tabHeader.setBackground(DeepNoteTheme.HEADER);
         tabHeader.setBorder(DeepNoteTheme.divider(0, 0, 1, 0));
 
         tabStrip.setOpaque(false);
@@ -301,8 +116,8 @@ public class MainWindow extends JFrame {
         JScrollPane tabScroll = new JScrollPane(tabStrip, ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER,
                 ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED);
         tabScroll.setBorder(null);
-        tabScroll.getViewport().setBackground(DeepNoteTheme.SIDEBAR);
-        tabScroll.setBackground(DeepNoteTheme.SIDEBAR);
+        tabScroll.getViewport().setBackground(DeepNoteTheme.HEADER);
+        tabScroll.setBackground(DeepNoteTheme.HEADER);
         tabScroll.getHorizontalScrollBar().setPreferredSize(new Dimension(0, 4));
 
         ModernButton newTabBtn = ModernButton.iconOnly(DeepNoteIcon.Kind.PLUS, "New note (" + MOD_LABEL + "+N)",
@@ -310,6 +125,11 @@ public class MainWindow extends JFrame {
         newTabBtn.addActionListener(event -> createNote());
         JPanel newTabHolder = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4));
         newTabHolder.setOpaque(false);
+        ModernButton homeButton = new ModernButton("Home", DeepNoteIcon.Kind.DOCUMENT,
+                ModernButton.Variant.GHOST);
+        homeButton.setToolTipText("Return to home (" + MOD_LABEL + "+K)");
+        homeButton.addActionListener(event -> showHome());
+        newTabHolder.add(homeButton);
         newTabHolder.add(newTabBtn);
 
         tabHeader.add(tabScroll, BorderLayout.CENTER);
@@ -335,6 +155,18 @@ public class MainWindow extends JFrame {
         JPanel container = new JPanel();
         container.setOpaque(false);
         container.setLayout(new BoxLayout(container, BoxLayout.Y_AXIS));
+
+        configureHomeSearch();
+        JPanel searchRow = new JPanel(new BorderLayout(12, 0));
+        searchRow.setOpaque(false);
+        searchRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42));
+        searchRow.add(searchField, BorderLayout.CENTER);
+        JLabel resultLabel = new JLabel(notes.size() + (notes.size() == 1 ? " note" : " notes"));
+        resultLabel.setFont(DeepNoteTheme.SMALL);
+        resultLabel.setForeground(DeepNoteTheme.MUTED);
+        searchRow.add(resultLabel, BorderLayout.EAST);
+        container.add(searchRow);
+        container.add(Box.createVerticalStrut(28));
 
         // Hero Brand & Heading Block
         JPanel hero = new JPanel();
@@ -382,7 +214,6 @@ public class MainWindow extends JFrame {
                 {MOD_LABEL + "+N", "New note"},
                 {MOD_LABEL + "+K", "Search"},
                 {MOD_LABEL + "+J", "Ask AI"},
-                {MOD_LABEL + "+B", "Sidebar"},
                 {MOD_LABEL + "+S", "Save note"}
         };
         for (String[] shortcut : shortcuts) {
@@ -401,14 +232,15 @@ public class MainWindow extends JFrame {
 
         container.add(hero);
 
-        // Recent Notes Grid
+        // Homepage notes collection: this is the sole browsing surface.
         if (!notes.isEmpty()) {
             JPanel recentSection = new JPanel();
             recentSection.setOpaque(false);
             recentSection.setLayout(new BoxLayout(recentSection, BoxLayout.Y_AXIS));
             recentSection.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-            JLabel recentLabel = new JLabel("RECENT NOTES");
+            boolean filtering = !searchField.getText().isBlank();
+            JLabel recentLabel = new JLabel(filtering ? "SEARCH RESULTS" : "ALL NOTES");
             recentLabel.setFont(DeepNoteTheme.LABEL);
             recentLabel.setForeground(DeepNoteTheme.FAINT);
             recentLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -419,7 +251,6 @@ public class MainWindow extends JFrame {
 
             notes.stream()
                     .sorted(Comparator.comparingLong((Note note) -> lastModified(note.path())).reversed())
-                    .limit(6)
                     .forEach(note -> grid.add(recentCard(note)));
 
             recentSection.add(Box.createVerticalStrut(32));
@@ -435,11 +266,13 @@ public class MainWindow extends JFrame {
             emptyCard.setAlignmentX(Component.LEFT_ALIGNMENT);
             emptyCard.setMaximumSize(new Dimension(560, 96));
 
-            JLabel emptyTitle = new JLabel("Your workspace is clear");
+            boolean filtering = !searchField.getText().isBlank();
+            JLabel emptyTitle = new JLabel(filtering ? "No notes match your search" : "Your workspace is clear");
             emptyTitle.setFont(DeepNoteTheme.BODY_MEDIUM);
             emptyTitle.setForeground(DeepNoteTheme.TEXT);
 
-            JLabel emptyDesc = new JLabel("Create your first plain-text note with the button above or press " + MOD_LABEL + "+N.");
+            JLabel emptyDesc = new JLabel(filtering ? "Try a different title or keyword."
+                    : "Create your first plain-text note with the button above or press " + MOD_LABEL + "+N.");
             emptyDesc.setFont(DeepNoteTheme.SMALL);
             emptyDesc.setForeground(DeepNoteTheme.MUTED);
 
@@ -487,6 +320,24 @@ public class MainWindow extends JFrame {
         hint.add(keycap);
         hint.add(text);
         return hint;
+    }
+
+    private void configureHomeSearch() {
+        searchField.putClientProperty("JTextField.placeholderText", "Search all notes by title or content");
+        searchField.putClientProperty("JTextField.leadingIcon",
+                new DeepNoteIcon(DeepNoteIcon.Kind.SEARCH, DeepNoteTheme.MUTED, 16));
+        searchField.putClientProperty("JTextField.showClearButton", true);
+        searchField.setFont(DeepNoteTheme.BODY);
+        searchField.setToolTipText("Search titles and content (" + MOD_LABEL + "+K)");
+
+        RoundedPanel searchBadge = new RoundedPanel(new BorderLayout(), 5,
+                DeepNoteTheme.RAISED, DeepNoteTheme.BORDER_SUBTLE);
+        searchBadge.setBorder(DeepNoteTheme.padding(2, 6, 2, 6));
+        JLabel searchBadgeText = new JLabel(MOD_LABEL + " K");
+        searchBadgeText.setFont(DeepNoteTheme.KEYCAP);
+        searchBadgeText.setForeground(DeepNoteTheme.FAINT);
+        searchBadge.add(searchBadgeText, BorderLayout.CENTER);
+        searchField.putClientProperty("JTextField.trailingComponent", searchBadge);
     }
 
     private JComponent recentCard(Note note) {
@@ -551,7 +402,7 @@ public class MainWindow extends JFrame {
 
     private JPanel buildStatusBar() {
         JPanel status = new JPanel(new BorderLayout());
-        status.setBackground(DeepNoteTheme.SIDEBAR);
+        status.setBackground(DeepNoteTheme.HEADER);
         status.setBorder(BorderFactory.createCompoundBorder(
                 DeepNoteTheme.divider(1, 0, 0, 0),
                 DeepNoteTheme.padding(5, 14, 5, 14)));
@@ -578,7 +429,6 @@ public class MainWindow extends JFrame {
         bind(KeyEvent.VK_K, "focusSearch", this::focusSearch);
         bind(KeyEvent.VK_J, "toggleAssistant", this::toggleCurrentAssistant);
         bind(KeyEvent.VK_W, "closeTab", () -> { if (selectedTab != null) closeTab(selectedTab); });
-        bind(KeyEvent.VK_B, "toggleSidebar", this::toggleSidebar);
     }
 
     private void bind(int keyCode, String name, Runnable action) {
@@ -588,23 +438,8 @@ public class MainWindow extends JFrame {
         });
     }
 
-    private void toggleSidebar() {
-        sidebarVisible = !sidebarVisible;
-        if (sidebarVisible) {
-            navigation.setVisible(true);
-            mainSplitPane.setDividerSize(1);
-            mainSplitPane.setDividerLocation(lastSidebarWidth > 100 ? lastSidebarWidth : DEFAULT_SIDEBAR_WIDTH);
-        } else {
-            lastSidebarWidth = mainSplitPane.getDividerLocation();
-            navigation.setVisible(false);
-            mainSplitPane.setDividerSize(0);
-        }
-        mainSplitPane.revalidate();
-        mainSplitPane.repaint();
-    }
-
     private void focusSearch() {
-        if (!sidebarVisible) toggleSidebar();
+        showHome();
         searchField.requestFocusInWindow();
         searchField.selectAll();
     }
@@ -617,57 +452,21 @@ public class MainWindow extends JFrame {
         if (selectedTab != null) selectedTab.toggleAssistant(!selectedTab.isAssistantVisible());
     }
 
-    // ---------------------------------------------------------------- Note List
+    // ---------------------------------------------------------------- Homepage note collection
 
     private void reloadList() {
         List<Note> all = noteService.listNotes();
         String query = searchField.getText();
         List<Note> shown = searchService.search(all, query);
 
-        syncingSelection = true;
-        try {
-            noteListModel.clear();
-            shown.forEach(noteListModel::addElement);
-        } finally {
-            syncingSelection = false;
-        }
-
-        boolean filtering = query != null && !query.isBlank();
-        noteCountLabel.setText(shown.size() + (filtering ? (shown.size() == 1 ? " match" : " matches")
-                : (shown.size() == 1 ? " note" : " notes")));
-
-        syncListSelection();
-        rebuildHome(all);
-    }
-
-    private void syncListSelection() {
-        syncingSelection = true;
-        try {
-            noteList.clearSelection();
-            if (selectedTab == null) return;
-            for (int i = 0; i < noteListModel.size(); i++) {
-                if (noteListModel.get(i).path().equals(selectedTab.note.path())) {
-                    noteList.setSelectedIndex(i);
-                    noteList.ensureIndexIsVisible(i);
-                    return;
-                }
-            }
-        } finally {
-            syncingSelection = false;
-        }
-    }
-
-    private void setHoverIndex(int index) {
-        if (index == hoverIndex) return;
-        hoverIndex = index;
-        noteList.repaint();
+        rebuildHome(shown);
     }
 
     // ---------------------------------------------------------------- Tabs
 
     private void showHome() {
         ((CardLayout) contentCards.getLayout()).show(contentCards, "home");
-        syncListSelection();
+        reloadList();
     }
 
     private void showWorkspace() {
@@ -706,7 +505,6 @@ public class MainWindow extends JFrame {
         ((CardLayout) editorStack.getLayout()).show(editorStack, tab.id);
         tabOrder.forEach(other -> other.chip.setSelectedState(other == tab));
         showWorkspace();
-        syncListSelection();
         tabStrip.revalidate();
         tabStrip.repaint();
         SwingUtilities.invokeLater(() -> {
@@ -823,80 +621,6 @@ public class MainWindow extends JFrame {
         return box;
     }
 
-    // ---------------------------------------------------------------- Note List Cell
-
-    private final class NoteCellRenderer extends JPanel implements ListCellRenderer<Note> {
-        private final JLabel title = new JLabel();
-        private final JLabel preview = new JLabel();
-        private final JLabel timeLabel = new JLabel();
-        private boolean selected;
-        private boolean hovered;
-
-        NoteCellRenderer() {
-            setOpaque(false);
-            setLayout(new BorderLayout(0, 3));
-            setBorder(DeepNoteTheme.padding(10, 14, 10, 12));
-
-            title.setFont(DeepNoteTheme.BODY_MEDIUM);
-            preview.setFont(DeepNoteTheme.SMALL);
-            timeLabel.setFont(DeepNoteTheme.KEYCAP);
-            timeLabel.setForeground(DeepNoteTheme.FAINT);
-
-            JPanel top = new JPanel(new BorderLayout());
-            top.setOpaque(false);
-            top.add(title, BorderLayout.WEST);
-            top.add(timeLabel, BorderLayout.EAST);
-
-            add(top, BorderLayout.CENTER);
-            add(preview, BorderLayout.SOUTH);
-        }
-
-        @Override public Component getListCellRendererComponent(JList<? extends Note> list, Note note, int index,
-                                                                boolean isSelected, boolean focused) {
-            selected = isSelected;
-            hovered = index == hoverIndex;
-
-            title.setText(note.title());
-            title.setForeground(isSelected ? DeepNoteTheme.TEXT : DeepNoteTheme.TEXT);
-
-            preview.setText(cleanPreview(note.content(), note.title(), 38));
-            preview.setForeground(isSelected ? DeepNoteTheme.ACCENT_TEXT : DeepNoteTheme.MUTED);
-
-            timeLabel.setText(formatRelativeTime(lastModified(note.path())));
-            timeLabel.setForeground(isSelected ? DeepNoteTheme.ACCENT_TEXT : DeepNoteTheme.FAINT);
-
-            return this;
-        }
-
-        @Override protected void paintComponent(Graphics graphics) {
-            Graphics2D g = (Graphics2D) graphics.create();
-            DeepNoteTheme.smooth(g);
-
-            int width = getWidth();
-            int height = getHeight();
-
-            if (selected) {
-                // Sleek selected capsule with subtle left accent indicator
-                g.setColor(DeepNoteTheme.SURFACE_SELECTED);
-                g.fillRoundRect(3, 2, width - 6, height - 4, 10, 10);
-                g.setColor(DeepNoteTheme.BORDER_ACCENT);
-                g.drawRoundRect(3, 2, width - 7, height - 5, 10, 10);
-
-                // Vertical accent indicator
-                g.setColor(DeepNoteTheme.ACCENT);
-                g.fillRoundRect(3, 14, 3, height - 28, 2, 2);
-            } else if (hovered) {
-                g.setColor(DeepNoteTheme.SURFACE_HOVER);
-                g.fillRoundRect(3, 2, width - 6, height - 4, 10, 10);
-                g.setColor(DeepNoteTheme.BORDER_SUBTLE);
-                g.drawRoundRect(3, 2, width - 7, height - 5, 10, 10);
-            }
-
-            g.dispose();
-            super.paintComponent(graphics);
-        }
-    }
-
     // ---------------------------------------------------------------- Tab Chip
 
     private final class TabChip extends RoundedPanel {
@@ -948,7 +672,7 @@ public class MainWindow extends JFrame {
         }
 
         private void restyle() {
-            setFill(selected ? DeepNoteTheme.CANVAS : hovered ? DeepNoteTheme.SURFACE_HOVER : DeepNoteTheme.SIDEBAR);
+            setFill(selected ? DeepNoteTheme.CANVAS : hovered ? DeepNoteTheme.SURFACE_HOVER : DeepNoteTheme.HEADER);
             setStroke(selected ? DeepNoteTheme.BORDER : hovered ? DeepNoteTheme.BORDER_SUBTLE : null);
             title.setForeground(selected ? DeepNoteTheme.TEXT : DeepNoteTheme.MUTED);
         }
@@ -1061,11 +785,6 @@ public class MainWindow extends JFrame {
                     DeepNoteTheme.divider(0, 0, 1, 0),
                     DeepNoteTheme.padding(8, 16, 8, 16)));
 
-            // Left: Sidebar toggle, breadcrumb, save status
-            ModernButton sidebarBtn = ModernButton.iconOnly(DeepNoteIcon.Kind.SIDEBAR_LEFT,
-                    "Toggle sidebar (" + MOD_LABEL + "+B)", ModernButton.Variant.GHOST, 16);
-            sidebarBtn.addActionListener(event -> toggleSidebar());
-
             breadcrumb.setFont(DeepNoteTheme.BODY_MEDIUM);
             breadcrumb.setForeground(DeepNoteTheme.TEXT_SECONDARY);
 
@@ -1077,7 +796,7 @@ public class MainWindow extends JFrame {
                     DeepNoteTheme.SURFACE, DeepNoteTheme.BORDER_SUBTLE);
             statusCapsule.add(statusLabel);
 
-            toolbar.add(hbox(10, sidebarBtn, breadcrumb, statusCapsule), BorderLayout.WEST);
+            toolbar.add(hbox(10, breadcrumb, statusCapsule), BorderLayout.WEST);
 
             // Right: Rename, Delete, Save, Ask AI
             ModernButton save = new ModernButton("Save", DeepNoteIcon.Kind.SAVE, ModernButton.Variant.SECONDARY);

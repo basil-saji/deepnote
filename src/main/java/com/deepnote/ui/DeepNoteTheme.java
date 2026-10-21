@@ -21,7 +21,7 @@ import java.util.Set;
 public final class DeepNoteTheme {
     // Surfaces: deep graphite/near-black hierarchy with subtle differentiation
     public static final Color BACKGROUND = hex("#0C0D11");       // Base window shell
-    public static final Color SIDEBAR = hex("#111318");          // Left navigation pane
+    public static final Color HEADER = hex("#111318");           // Header, tabs, and secondary surfaces
     public static final Color CANVAS = hex("#15171F");           // Note editor writing surface
     public static final Color SURFACE = hex("#1B1D26");          // Cards, toolbars, elevated elements
     public static final Color SURFACE_HOVER = hex("#222532");    // Interactive hover state
@@ -118,13 +118,13 @@ public final class DeepNoteTheme {
         UIManager.put("ScrollBar.thumbArc", 999);
         UIManager.put("ScrollBar.thumbInsets", new Insets(2, 2, 2, 2));
         UIManager.put("ScrollBar.showButtons", false);
-        UIManager.put("ScrollBar.track", alpha(SIDEBAR, 0));
+        UIManager.put("ScrollBar.track", alpha(HEADER, 0));
         UIManager.put("ScrollBar.thumb", hex("#2A2D3C"));
         UIManager.put("ScrollBar.hoverThumbColor", hex("#3C4054"));
         UIManager.put("ScrollBar.pressedThumbColor", hex("#505670"));
 
         // Split Panes - clean 1px divider lines
-        UIManager.put("SplitPane.background", SIDEBAR);
+        UIManager.put("SplitPane.background", HEADER);
         UIManager.put("SplitPane.dividerSize", 1);
         UIManager.put("SplitPaneDivider.gripDotSize", 0);
 
@@ -141,8 +141,8 @@ public final class DeepNoteTheme {
         UIManager.put("PopupMenu.borderColor", BORDER);
 
         // Title bar
-        UIManager.put("TitlePane.background", SIDEBAR);
-        UIManager.put("TitlePane.inactiveBackground", SIDEBAR);
+        UIManager.put("TitlePane.background", HEADER);
+        UIManager.put("TitlePane.inactiveBackground", HEADER);
         UIManager.put("TitlePane.foreground", MUTED);
         UIManager.put("TitlePane.inactiveForeground", FAINT);
         UIManager.put("TitlePane.buttonHoverBackground", SURFACE_HOVER);

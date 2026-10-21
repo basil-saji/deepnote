@@ -68,7 +68,7 @@ public class AIAssistantPanel extends JPanel {
             }
         };
 
-        setBackground(DeepNoteTheme.SIDEBAR);
+        setBackground(DeepNoteTheme.HEADER);
         setLayout(new BorderLayout());
         setMinimumSize(new Dimension(320, 0));
         setPreferredSize(new Dimension(400, 0));
@@ -106,7 +106,7 @@ public class AIAssistantPanel extends JPanel {
 
     private JPanel buildHeader() {
         JPanel header = new JPanel(new BorderLayout(10, 0));
-        header.setBackground(DeepNoteTheme.SIDEBAR);
+        header.setBackground(DeepNoteTheme.HEADER);
         header.setBorder(BorderFactory.createCompoundBorder(
                 DeepNoteTheme.divider(0, 0, 1, 0),
                 DeepNoteTheme.padding(12, 16, 12, 12)));

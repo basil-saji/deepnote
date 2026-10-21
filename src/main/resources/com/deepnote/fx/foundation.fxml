@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Pos?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.layout.StackPane?>
+
+<StackPane xmlns="http://javafx.com/javafx/27"
+           xmlns:fx="http://javafx.com/fxml/1"
+           fx:controller="com.deepnote.fx.FoundationController"
+           styleClass="foundation-root">
+    <VBox alignment="CENTER" spacing="12" maxWidth="620" StackPane.alignment="CENTER">
+        <Label text="DeepNote" styleClass="foundation-title" />
+        <Label text="JavaFX foundation is ready" styleClass="foundation-heading" />
+        <Label text="The full homepage and editor wireframe will be migrated in the next phase."
+               wrapText="true" maxWidth="520" alignment="CENTER" styleClass="foundation-copy" />
+        <Label fx:id="statusLabel" styleClass="foundation-status" />
+    </VBox>
+</StackPane>

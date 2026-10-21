@@ -14,7 +14,7 @@ import java.awt.geom.RoundRectangle2D;
 public final class DeepNoteIcon implements Icon {
     public enum Kind {
         SEARCH, PLUS, SAVE, EDIT, TRASH, SPARK, CLOSE, SEND, DOCUMENT, CHEVRON,
-        SIDEBAR_LEFT, SIDEBAR_RIGHT, CHECK, LOCK, REFRESH, KEYBOARD, CLOCK
+        SIDEBAR_RIGHT, CHECK, LOCK, REFRESH, KEYBOARD, CLOCK
     }
 
     private final Kind kind;
@@ -113,10 +113,6 @@ public final class DeepNoteIcon implements Icon {
                 poly(g, false, 8.5, 17, 13.5, 17);
             }
             case CHEVRON -> poly(g, false, 8, 10, 12, 14.5, 16, 10);
-            case SIDEBAR_LEFT -> {
-                g.draw(new RoundRectangle2D.Double(3, 4, 18, 16, 4, 4));
-                g.draw(new Line2D.Double(9.5, 4, 9.5, 20));
-            }
             case SIDEBAR_RIGHT -> {
                 g.draw(new RoundRectangle2D.Double(3, 4, 18, 16, 4, 4));
                 g.draw(new Line2D.Double(14.5, 4, 14.5, 20));

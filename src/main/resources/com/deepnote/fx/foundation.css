@@ -1,0 +1,32 @@
+.foundation-root {
+    -fx-background-color: #0D1016;
+    -fx-padding: 48px;
+}
+
+.foundation-title {
+    -fx-text-fill: #8B8CF8;
+    -fx-font-size: 16px;
+    -fx-font-weight: bold;
+}
+
+.foundation-heading {
+    -fx-text-fill: #EDF1F7;
+    -fx-font-size: 30px;
+    -fx-font-weight: bold;
+}
+
+.foundation-copy {
+    -fx-text-fill: #9AA6B8;
+    -fx-font-size: 14px;
+    -fx-text-alignment: center;
+}
+
+.foundation-status {
+    -fx-text-fill: #5ED6A0;
+    -fx-font-size: 13px;
+    -fx-padding: 12px 18px;
+    -fx-background-color: #141923;
+    -fx-background-radius: 8px;
+    -fx-border-color: #2A3240;
+    -fx-border-radius: 8px;
+}

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<VBox xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.AssistantPanelController" spacing="12" styleClass="ai-panel">
+    <HBox alignment="CENTER_LEFT" spacing="8" styleClass="ai-header"><VBox><Label text="DeepNote AI" styleClass="panel-title"/><Label fx:id="statusLabel" styleClass="mono-label"/></VBox><Region HBox.hgrow="ALWAYS"/><Button fx:id="clearButton" text="Clear" styleClass="text-button"/><Button fx:id="closeButton" text="×" styleClass="icon-button"/></HBox>
+    <VBox fx:id="welcome" spacing="8" styleClass="ai-welcome"><Label text="Chat with this note" styleClass="panel-title"/><Label text="Questions use the current editor content and stay local to this session." wrapText="true" styleClass="card-preview"/><FlowPane fx:id="suggestions" hgap="6" vgap="6"/></VBox>
+    <ListView fx:id="messages" VBox.vgrow="ALWAYS" styleClass="message-list"/>
+    <Label fx:id="thinkingLabel" text="" styleClass="ai-status"/>
+    <HBox spacing="8" alignment="BOTTOM_RIGHT"><TextArea fx:id="composer" promptText="Ask about this note…" prefRowCount="3" wrapText="true" styleClass="composer" HBox.hgrow="ALWAYS"/><Button fx:id="sendButton" text="Send" styleClass="primary-button"/></HBox>
+</VBox>

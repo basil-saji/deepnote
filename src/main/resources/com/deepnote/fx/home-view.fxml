@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<VBox xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.HomeViewController" fx:id="root" spacing="24" styleClass="home-page">
+    <HBox alignment="CENTER_LEFT" spacing="12">
+        <Label text="Good morning 👋" styleClass="page-title" />
+        <Region HBox.hgrow="ALWAYS" />
+        <Button fx:id="newNoteButton" text="+  New note" styleClass="primary-button" />
+    </HBox>
+    <TextField fx:id="searchField" promptText="Search notes by title or content" styleClass="search-field" />
+    <HBox alignment="CENTER_RIGHT" spacing="8">
+        <ToggleButton fx:id="gridButton" text="▦  Grid" styleClass="view-toggle" />
+        <ToggleButton fx:id="listButton" text="☰  List" styleClass="view-toggle" />
+    </HBox>
+    <VBox fx:id="collections" spacing="28" VBox.vgrow="ALWAYS" />
+</VBox>

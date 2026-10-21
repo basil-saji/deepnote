@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<BorderPane xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.EditorViewController" styleClass="editor-view">
+    <top><VBox spacing="12" styleClass="editor-header">
+        <HBox alignment="CENTER_LEFT" spacing="12"><VBox spacing="5"><Label fx:id="titleLabel" styleClass="editor-title"/><Label fx:id="metadataLabel" styleClass="editor-meta"/></VBox><Region HBox.hgrow="ALWAYS"/><HBox fx:id="actions" spacing="8" alignment="CENTER_RIGHT"/></HBox>
+    </VBox></top>
+    <center><ScrollPane fx:id="editorScroll" fitToWidth="true" fitToHeight="true" hbarPolicy="NEVER"><content><TextArea fx:id="editor" wrapText="true" styleClass="note-editor"/></content></ScrollPane></center>
+</BorderPane>

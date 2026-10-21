@@ -2,39 +2,54 @@
     -primary: #4C8DFF; -secondary: #8AB4FF; -tertiary: #A6C8FF;
     -background: #0D0F12; -surface: #1B1D22; -border: #30343D;
     -text-primary: #F1F3F6; -text-muted: #969DA9;
-    -fx-font-family: "Inter", "Segoe UI", sans-serif; -fx-background-color: -background; -fx-text-fill: -text-primary;
+    -success: #34D399; -warning: #FBBF24; -danger: #F87171;
+    -surface-hover: #22252B; -border-subtle: #252932;
+    -fx-font-family: "Inter", "Segoe UI", sans-serif;
+    -fx-background-color: -background; -fx-text-fill: -text-primary;
+    -fx-focus-color: -primary; -fx-faint-focus-color: transparent;
+    -fx-accent: -primary; -fx-selection-bar: -primary; -fx-selection-bar-non-focused: -primary;
 }
-.app-root, .home-page, .editor-column { -fx-background-color: -background; }
-.app-header { -fx-padding: 12 22; -fx-border-color: -border; -fx-border-width: 0 0 1 0; }
+.app-root, .home-page, .editor-view, .editor-column { -fx-background-color: -background; }
+.app-header { -fx-min-height: 42; -fx-padding: 0 24; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0; }
 .brand { -fx-text-fill: -text-primary; -fx-font-size: 14px; -fx-font-weight: bold; }
-.mono-label, .status-line { -fx-font-family: "JetBrains Mono", "Consolas", monospace; -fx-font-size: 10px; -fx-text-fill: -text-muted; }
-.tab-bar { -fx-padding: 0 18; -fx-background-color: -background; }
-.workspace-tabs, .workspace-tabs .tab-header-area { -fx-background-color: transparent; }
-.workspace-tabs .tab { -fx-background-color: transparent; -fx-padding: 13 16; }
-.workspace-tabs .tab:selected { -fx-background-color: -surface; -fx-border-color: -primary; -fx-border-width: 0 0 2 0; }
-.workspace-tabs .tab-label { -fx-text-fill: -text-muted; }
-.workspace-tabs .tab:selected .tab-label { -fx-text-fill: -text-primary; }
-.status-line { -fx-padding: 8 22; -fx-border-color: -border; -fx-border-width: 1 0 0 0; }
+.mono-label, .status-line, .section-label, .card-tag { -fx-font-family: "JetBrains Mono", "Consolas", monospace; -fx-font-size: 10px; -fx-text-fill: -text-muted; }
+.tab-bar { -fx-padding: 0 18; -fx-background-color: -background; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0; }
+.workspace-tabs, .workspace-tabs .tab-header-area, .tab-bar .tab-pane, .tab-bar .tab-pane .tab-header-area { -fx-background-color: transparent; }
+.tab-bar .tab { -fx-background-color: transparent; -fx-padding: 11 16; }
+.tab-bar .tab:selected { -fx-background-color: -surface; -fx-border-color: -primary; -fx-border-width: 0 0 2 0; }
+.tab-bar .tab-label { -fx-text-fill: -text-muted; -fx-font-size: 13px; }
+.tab-bar .tab:selected .tab-label { -fx-text-fill: -text-primary; }
+.status-line { -fx-padding: 7 24; -fx-border-color: -border-subtle; -fx-border-width: 1 0 0 0; }
+.home-page { -fx-padding: 32 40 40 40; }
 .page-title { -fx-text-fill: -text-primary; -fx-font-size: 34px; -fx-font-weight: bold; }
-.accent-text { -fx-text-fill: -primary; -fx-font-size: 20px; }
-.search-field, .composer { -fx-background-color: -surface; -fx-text-fill: -text-primary; -fx-prompt-text-fill: -text-muted; -fx-border-color: -border; -fx-border-radius: 8; -fx-background-radius: 8; -fx-padding: 12; }
-.primary-button { -fx-background-color: -primary; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 7; -fx-padding: 10 15; }
+.search-field, .composer { -fx-min-height: 46; -fx-background-color: -surface; -fx-text-fill: -text-primary; -fx-prompt-text-fill: -text-muted; -fx-border-color: -border; -fx-border-radius: 9; -fx-background-radius: 9; -fx-padding: 11 14; }
+.primary-button { -fx-background-color: -primary; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 8; -fx-padding: 10 15; }
 .primary-button:hover { -fx-background-color: -secondary; }
-.secondary-button, .text-button, .danger-button, .icon-button, .view-toggle { -fx-background-color: -surface; -fx-text-fill: -text-primary; -fx-border-color: -border; -fx-border-radius: 6; -fx-background-radius: 6; -fx-padding: 9 12; }
-.danger-button { -fx-text-fill: #FF9B9B; }
+.primary-button:focused, .secondary-button:focused, .text-button:focused, .icon-button:focused, .view-toggle:focused, .search-field:focused, .composer:focused { -fx-border-color: -primary; -fx-border-width: 1; }
+.secondary-button, .text-button, .icon-button, .view-toggle, .suggestion-button { -fx-background-color: -surface; -fx-text-fill: -text-primary; -fx-border-color: -border; -fx-border-radius: 7; -fx-background-radius: 7; -fx-padding: 9 12; }
+.secondary-button:hover, .text-button:hover, .icon-button:hover, .suggestion-button:hover { -fx-background-color: -surface-hover; -fx-border-color: -secondary; }
+.danger-button { -fx-background-color: -surface; -fx-text-fill: -danger; -fx-border-color: -border; -fx-border-radius: 7; -fx-background-radius: 7; -fx-padding: 9 12; }
 .icon-button { -fx-padding: 8 11; }
-.view-toggle:selected { -fx-background-color: -primary; -fx-text-fill: white; }
-.section-label, .card-tag { -fx-font-family: "JetBrains Mono", "Consolas", monospace; -fx-font-size: 10px; -fx-text-fill: -text-muted; -fx-font-weight: bold; }
-.note-card { -fx-background-color: -surface; -fx-border-color: -border; -fx-border-radius: 10; -fx-background-radius: 10; -fx-padding: 16; -fx-pref-width: 280; -fx-pref-height: 155; }
-.note-card:hover { -fx-border-color: -secondary; }
+.view-toggle:selected { -fx-background-color: -primary; -fx-text-fill: white; -fx-border-color: -primary; }
+.section-label { -fx-font-weight: bold; }
+.note-card { -fx-background-color: -surface; -fx-border-color: -border-subtle; -fx-border-radius: 11; -fx-background-radius: 11; -fx-padding: 17; -fx-min-height: 150; }
+.note-card:hover { -fx-background-color: -surface-hover; -fx-border-color: -secondary; }
 .card-tag { -fx-text-fill: -secondary; }
 .card-title, .panel-title { -fx-text-fill: -text-primary; -fx-font-size: 16px; -fx-font-weight: bold; }
 .card-preview, .editor-meta, .empty-state { -fx-text-fill: -text-muted; -fx-font-size: 12px; }
-.editor-title { -fx-text-fill: -text-primary; -fx-font-size: 30px; -fx-font-weight: bold; }
-.note-editor { -fx-background-color: -background; -fx-text-fill: -text-primary; -fx-font-family: "Inter", "Segoe UI", sans-serif; -fx-font-size: 16px; -fx-highlight-fill: -primary; -fx-highlight-text-fill: white; -fx-border-color: transparent; }
-.note-editor .content { -fx-background-color: -background; -fx-padding: 8 0; }
-.ai-panel { -fx-background-color: -surface; -fx-border-color: -border; -fx-border-width: 1 0 0 1; }
+.editor-header { -fx-padding: 30 40 20 40; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0; }
+.editor-title { -fx-text-fill: -text-primary; -fx-font-size: 32px; -fx-font-weight: bold; }
+.note-editor { -fx-background-color: -background; -fx-text-fill: -text-primary; -fx-font-family: "Inter", "Segoe UI", sans-serif; -fx-font-size: 17px; -fx-highlight-fill: -primary; -fx-highlight-text-fill: white; -fx-border-color: transparent; }
+.note-editor .content { -fx-background-color: -background; -fx-padding: 30 40; }
+.editor-view > .scroll-pane, .editor-view > .scroll-pane > .viewport, .scroll-pane, .scroll-pane > .viewport { -fx-background-color: -background; }
+.ai-panel { -fx-background-color: -surface; -fx-border-color: -border; -fx-border-width: 0 0 0 1; -fx-padding: 18; -fx-pref-width: 360; -fx-min-width: 300; }
+.ai-header { -fx-padding: 0 0 14 0; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0; }
+.ai-welcome { -fx-padding: 8 0; }
 .message-list { -fx-background-color: transparent; -fx-control-inner-background: -surface; -fx-border-color: transparent; }
-.message-list .list-cell { -fx-background-color: -surface; -fx-text-fill: -text-primary; -fx-padding: 12; }
-.scroll-pane, .scroll-pane > .viewport { -fx-background-color: -background; }
+.message-list .list-cell { -fx-background-color: -surface; -fx-text-fill: -text-primary; -fx-padding: 12; -fx-wrap-text: true; }
+.ai-status { -fx-text-fill: -warning; -fx-font-size: 11px; }
+.suggestion-button { -fx-font-size: 11px; -fx-padding: 7 9; }
+.scroll-bar:vertical { -fx-pref-width: 8; -fx-background-color: transparent; }
+.scroll-bar:vertical .thumb { -fx-background-color: -border; -fx-background-radius: 5; }
+.scroll-bar:vertical .track { -fx-background-color: transparent; }
 .label { -fx-text-fill: -text-primary; }

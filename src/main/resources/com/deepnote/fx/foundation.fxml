@@ -1,3 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<?import javafx.scene.layout.BorderPane?>
-<BorderPane xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.FoundationController" fx:id="root" />
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<BorderPane xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.FoundationController" fx:id="root" styleClass="app-root">
+    <top><VBox><HBox fx:id="brandRow" alignment="CENTER_LEFT" styleClass="app-header"><Label text="◆  DeepNote" styleClass="brand"/><Region HBox.hgrow="ALWAYS"/><Label fx:id="modelLabel" styleClass="mono-label"/></HBox><HBox alignment="CENTER_LEFT" styleClass="tab-bar"><TabPane fx:id="tabs" tabClosingPolicy="ALL_TABS" HBox.hgrow="ALWAYS"/><Button fx:id="newHomeButton" text="+" styleClass="icon-button"/></HBox></VBox></top>
+    <center><StackPane fx:id="workspace"/></center>
+    <bottom><Label fx:id="statusLabel" text="Local workspace" styleClass="status-line"/></bottom>
+</BorderPane>

@@ -13,7 +13,7 @@
         <Button fx:id="clearButton" text="×" styleClass="clear-button" focusTraversable="false"/>
         <Label fx:id="shortcutBadge" text="Ctrl+K" styleClass="key-badge"/>
     </HBox>
-    <ScrollPane fx:id="scroll" fitToWidth="true" hbarPolicy="NEVER" styleClass="page-scroll" VBox.vgrow="ALWAYS">
+    <ScrollPane fx:id="scroll" fitToWidth="true" hbarPolicy="NEVER" styleClass="page-scroll, home-scroll-invisible" VBox.vgrow="ALWAYS">
         <content>
             <VBox fx:id="body" spacing="22">
                 <HBox fx:id="controlsRow" alignment="CENTER_LEFT" spacing="10">

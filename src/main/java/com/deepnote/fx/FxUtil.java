@@ -25,6 +25,11 @@ final class FxUtil {
     static final String DOC = "M4 1.5h5.5L13 5v9.5H4z M9.5 1.5V5H13";
     static final String PENCIL = "M11.5 2.5l2 2L5 13l-3 1l1-3z M10 4l2 2";
     static final String TRASH = "M2.5 4.5h11 M6 4.5V3h4v1.5 M4 4.5l.7 8.5h6.6l.7-8.5 M6.8 7v4 M9.2 7v4";
+    static final String BACK = "M13 8H3 M7.5 3.5L3 8l4.5 4.5";
+    static final String MINIMIZE = "M3 8.5h10";
+    static final String MAXIMIZE = "M3.5 3.5h9v9h-9z";
+    static final String RESTORE = "M5.5 5.5v-2h7v7h-2 M3.5 5.5h7v7h-7z";
+    static final String CLOSE = "M3.5 3.5l9 9 M12.5 3.5l-9 9";
     static final String SAVE = "M8 2v7.5 M5 7l3 3l3-3 M2.5 10v3.5h11V10";
 
     private FxUtil() { }

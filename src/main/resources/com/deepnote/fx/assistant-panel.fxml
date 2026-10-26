@@ -4,7 +4,7 @@
 <?import javafx.scene.layout.*?>
 <VBox xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.AssistantPanelController" prefWidth="360.0" minWidth="310.0" styleClass="ai-panel">
     <HBox alignment="CENTER_LEFT" styleClass="ai-header">
-        <StackPane styleClass="ai-badge"><Label text="✦" styleClass="ai-badge-text"/></StackPane>
+        <StackPane styleClass="ai-badge, assistant-sparkle-badge" minWidth="28" prefWidth="28" maxWidth="28" minHeight="28" prefHeight="28" maxHeight="28"><Label text="✦" styleClass="ai-badge-text"/></StackPane>
         <VBox spacing="2" HBox.hgrow="ALWAYS" minWidth="0">
             <HBox alignment="CENTER_LEFT" spacing="8">
                 <Label text="DeepNote AI" styleClass="panel-title"/>

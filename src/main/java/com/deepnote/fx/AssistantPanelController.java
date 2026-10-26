@@ -116,8 +116,8 @@ public final class AssistantPanelController {
 
     private Node userBubble(String text, LocalTime time) {
         Label meta = new Label(time == null ? "You" : "You • " + time.format(CLOCK)); meta.getStyleClass().add("chat-meta");
-        Label bubble = new Label(text); bubble.getStyleClass().add("user-bubble"); bubble.setWrapText(true); bubble.setMaxWidth(290);
-        VBox box = new VBox(4, meta, bubble); box.setAlignment(Pos.CENTER_RIGHT);
+        Label bubble = new Label(text); bubble.getStyleClass().add("user-bubble"); bubble.setWrapText(true); bubble.setMaxWidth(260);
+        VBox box = new VBox(4, meta, bubble); box.setAlignment(Pos.CENTER_RIGHT); box.setFillWidth(false);
         return box;
     }
 
@@ -127,7 +127,7 @@ public final class AssistantPanelController {
         HBox meta = new HBox(8, who, gap); meta.setAlignment(Pos.CENTER_LEFT);
         if (millis >= 0) { Label took = new Label("Thought in " + millis + "ms"); took.getStyleClass().add("chat-meta"); meta.getChildren().add(took); }
 
-        Label body = new Label(text); body.getStyleClass().add("ai-text"); body.setWrapText(true); body.setMaxWidth(Double.MAX_VALUE);
+        VBox body = MarkdownView.render(text);
         Button insert = new Button("+ Insert to note"); insert.getStyleClass().add("copy-button");
         insert.setOnAction(e -> { insertHandler.accept(text); flash(insert, "✓ Inserted", "+ Insert to note"); });
         Button copy = new Button("⧉ Copy"); copy.getStyleClass().add("copy-button");

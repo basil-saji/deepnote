@@ -27,10 +27,11 @@
     -fx-background-color: -background; -fx-text-fill: -text-primary;
 }
 .label { -fx-text-fill: -text-primary; }
+.app-root { -fx-border-color: -border-subtle; -fx-border-width: 1; }
 .app-root, .home-page, .editor-view, .editor-canvas, .workspace { -fx-background-color: -background; }
 
 /* ---------- typography helpers ---------- */
-.mono-label, .status-text, .status-pill, .section-label, .txt-badge, .read-badge, .count-badge,
+.mono-label, .status-text, .section-label, .txt-badge, .read-badge, .count-badge,
 .key-badge, .context-pill, .model-pill, .status-online, .status-offline, .meta-text {
     -fx-font-family: "JetBrains Mono", "Consolas", monospace;
 }
@@ -92,7 +93,7 @@
 
 /* ---------- top bar & tab strip ---------- */
 .top-bar {
-    -fx-min-height: 42; -fx-pref-height: 42; -fx-max-height: 42; -fx-padding: 0 12 0 10; -fx-spacing: 12;
+    -fx-min-height: 42; -fx-pref-height: 42; -fx-max-height: 42; -fx-padding: 0 0 0 10; -fx-spacing: 10;
     -fx-background-color: -background; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0;
 }
 .tab-pill {
@@ -119,10 +120,6 @@
 .dot-blue { -fx-fill: -primary; }
 .dot-green { -fx-fill: -success; }
 .dot-amber { -fx-fill: -warning; }
-.status-pill {
-    -fx-font-size: 11px; -fx-text-fill: -text-muted; -fx-padding: 4 10; -fx-graphic-text-gap: 7;
-    -fx-background-color: -surface; -fx-background-radius: 12; -fx-border-color: -border-subtle; -fx-border-radius: 12;
-}
 
 /* ---------- bottom status bar ---------- */
 .bottom-bar {
@@ -235,7 +232,7 @@
 /* ---------- AI panel ---------- */
 .ai-panel { -fx-background-color: -background; -fx-border-color: -border-subtle; -fx-border-width: 0 0 0 1; -fx-pref-width: 360; -fx-min-width: 310; }
 .ai-header { -fx-min-height: 52; -fx-pref-height: 52; -fx-max-height: 52; -fx-padding: 0 12 0 14; -fx-spacing: 10; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0; }
-.ai-badge { -fx-min-width: 28; -fx-pref-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-background-color: -primary; -fx-background-radius: 8; }
+.ai-badge, .assistant-sparkle-badge { -fx-min-width: 28; -fx-max-width: 28; -fx-max-height: 28; -fx-pref-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-background-color: -primary; -fx-background-radius: 8; }
 .ai-badge-text { -fx-text-fill: -text-primary; -fx-font-size: 14px; -fx-font-weight: bold; }
 .panel-title { -fx-text-fill: -text-primary; -fx-font-size: 14px; -fx-font-weight: bold; }
 .model-pill { -fx-font-size: 10px; -fx-text-fill: -secondary; -fx-padding: 2 7; -fx-background-color: -surface; -fx-background-radius: 8; -fx-border-color: -border-subtle; -fx-border-radius: 8; }
@@ -265,3 +262,72 @@
 }
 .send-button:hover { -fx-background-color: -secondary; }
 .send-button:disabled { -fx-opacity: 0.5; }
+
+/* ---------- window chrome ---------- */
+.top-back-btn {
+    -fx-min-width: 28; -fx-pref-width: 28; -fx-max-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-max-height: 28;
+    -fx-padding: 0; -fx-background-color: -surface; -fx-background-insets: 0; -fx-background-radius: 8;
+    -fx-border-color: -border; -fx-border-radius: 8; -fx-cursor: hand;
+}
+.top-back-btn .icon-path { -fx-stroke: -text-muted; }
+.top-back-btn:hover { -fx-background-color: -surface-hover; -fx-border-color: -primary; }
+.top-back-btn:hover .icon-path { -fx-stroke: -text-primary; }
+.win-button {
+    -fx-min-width: 44; -fx-pref-width: 44; -fx-max-width: 44; -fx-min-height: 42; -fx-pref-height: 42; -fx-max-height: 42;
+    -fx-padding: 0; -fx-background-color: -background; -fx-background-insets: 0; -fx-background-radius: 0;
+    -fx-border-color: transparent; -fx-cursor: default;
+}
+.win-button .icon-path { -fx-stroke: -text-muted; -fx-stroke-width: 1.2; }
+.win-button:hover { -fx-background-color: -surface-hover; }
+.win-button:hover .icon-path { -fx-stroke: -text-primary; }
+.win-close:hover { -fx-background-color: #E81123; }
+.win-close:hover .icon-path { -fx-stroke: #FFFFFF; }
+
+/* ---------- invisible (but functional) home scrollbar ---------- */
+.home-scroll-invisible > .scroll-bar:vertical,
+.home-scroll-invisible > .scroll-bar:horizontal {
+    -fx-opacity: 0;
+    -fx-pref-width: 0; -fx-max-width: 0; -fx-min-width: 0;
+    -fx-pref-height: 0; -fx-max-height: 0;
+    -fx-padding: 0;
+}
+
+/* ---------- markdown in AI responses ---------- */
+.md-text { -fx-fill: -text-primary; -fx-font-size: 13px; }
+.md-bold { -fx-font-weight: 700; -fx-fill: -text-primary; }
+.md-h1 { -fx-fill: -text-primary; -fx-font-size: 15px; -fx-font-weight: bold; }
+.md-h2 { -fx-fill: -text-primary; -fx-font-size: 14px; -fx-font-weight: bold; }
+.md-marker { -fx-text-fill: -text-muted; -fx-font-size: 13px; }
+.md-inline-code {
+    -fx-font-family: "JetBrains Mono", "Consolas", monospace; -fx-font-size: 12px; -fx-text-fill: -secondary;
+    -fx-background-color: -border-subtle; -fx-background-radius: 5; -fx-padding: 0 5;
+}
+.md-code-block { -fx-background-color: -background; -fx-background-radius: 8; -fx-border-color: -border-subtle; -fx-border-radius: 8; -fx-padding: 8; }
+.md-code-text { -fx-font-family: "JetBrains Mono", "Consolas", monospace; -fx-font-size: 12px; -fx-text-fill: -tertiary; }
+
+/* ---------- custom dialogs ---------- */
+.dialog-backdrop { -fx-background-color: rgba(0, 0, 0, 0.55); }
+.dialog-card {
+    -fx-background-color: -surface; -fx-background-radius: 14; -fx-border-color: -border; -fx-border-radius: 14; -fx-padding: 24;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.6), 30, 0.2, 0, 8);
+}
+.dialog-title { -fx-text-fill: -text-primary; -fx-font-size: 18px; -fx-font-weight: bold; }
+.dialog-subtitle { -fx-text-fill: -text-muted; -fx-font-size: 13px; }
+.dialog-input, .dialog-input:focused {
+    -fx-min-height: 40; -fx-pref-height: 40; -fx-background-color: -background; -fx-background-insets: 0; -fx-background-radius: 8;
+    -fx-border-color: -border; -fx-border-radius: 8; -fx-border-width: 1; -fx-padding: 0 12;
+    -fx-text-fill: -text-primary; -fx-font-size: 14px; -fx-highlight-fill: -primary-selection; -fx-highlight-text-fill: -text-primary;
+}
+.dialog-input:focused { -fx-border-color: -primary; }
+.dialog-button {
+    -fx-min-height: 36; -fx-padding: 0 18; -fx-background-insets: 0; -fx-background-radius: 8; -fx-border-color: transparent;
+    -fx-font-weight: bold; -fx-font-size: 13px; -fx-cursor: hand;
+}
+.dialog-secondary { -fx-background-color: -surface-hover; -fx-text-fill: -text-primary; }
+.dialog-secondary:hover { -fx-background-color: -surface-raised; }
+.dialog-primary { -fx-background-color: -primary; -fx-text-fill: -text-primary; }
+.dialog-primary:hover { -fx-background-color: -secondary; }
+.dialog-primary:disabled { -fx-opacity: 0.5; }
+.dialog-danger { -fx-background-color: -danger; -fx-text-fill: -text-primary; }
+.dialog-danger:hover { -fx-background-color: #FCA5A5; }
+.dialog-button:focused { -fx-border-color: -tertiary; -fx-border-radius: 8; }

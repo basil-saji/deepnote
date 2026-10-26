@@ -7,19 +7,26 @@ import com.deepnote.config.AppConfig;
 import com.deepnote.model.ChatMessage;
 import com.deepnote.model.Note;
 import com.deepnote.service.NoteService;
+import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.geometry.Rectangle2D;
+import javafx.scene.Cursor;
+import javafx.scene.control.ButtonBase;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.StackPane;
 import javafx.scene.shape.Circle;
+import javafx.stage.Screen;
+import javafx.stage.Stage;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -30,9 +37,9 @@ import java.util.*;
 /** Workspace shell: single-row tab strip, active view host and live bottom status bar. */
 public final class FoundationController {
     @FXML private BorderPane root;
-    @FXML private HBox tabStrip;
-    @FXML private Button newHomeButton;
-    @FXML private Label statusPill, statusLeft, statusRight;
+    @FXML private HBox topBar, tabStrip;
+    @FXML private Button newHomeButton, backButton, minButton, maxButton, closeButton;
+    @FXML private Label statusLeft, statusRight;
     @FXML private StackPane workspace;
 
     private final AppConfig config = AppConfig.load();
@@ -42,7 +49,12 @@ public final class FoundationController {
             new OllamaChatModelClient(config.ollamaBaseUrl(), config.chatModelName(), Duration.ofSeconds(config.requestTimeoutSeconds())));
     private final Map<Path, List<ChatMessage>> conversations = new HashMap<>();
     private final List<TabEntry> entries = new ArrayList<>();
-    private final Circle pillDot = new Circle(4);
+    private static final double EDGE = 6;
+    private Stage stage;
+    private boolean maximized, dragging;
+    private double dragOffsetX, dragOffsetY, startX, startY, startW, startH, startScreenX, startScreenY;
+    private double[] restoreBounds;
+    private int resizeMask;
     private TabEntry current;
     private List<NoteItem> items = List.of();
 
@@ -75,8 +87,13 @@ public final class FoundationController {
     @FXML private void initialize() {
         newHomeButton.setTooltip(new Tooltip("Open a new Home tab"));
         newHomeButton.setOnAction(e -> addHomeTab());
-        statusPill.setGraphic(pillDot);
-        root.sceneProperty().addListener((o, old, scene) -> { if (scene != null) installShortcuts(scene); });
+        setupWindowChrome();
+        root.sceneProperty().addListener((o, old, scene) -> {
+            if (scene == null) return;
+            installShortcuts(scene);
+            scene.windowProperty().addListener((w, a, window) -> { if (window instanceof Stage s) attachStage(s, scene); });
+            if (scene.getWindow() instanceof Stage s) attachStage(s, scene);
+        });
         addHomeTab();
         refreshNotes();
     }
@@ -105,26 +122,39 @@ public final class FoundationController {
     }
 
     private void promptCreate(TabEntry source) {
-        TextInputDialog dialog = new TextInputDialog("Untitled note");
-        dialog.setTitle("New note"); dialog.setHeaderText("Create a TXT note");
-        dialog.showAndWait().ifPresent(title -> FxUtil.async(() -> noteService.createNote(title), note -> {
-            refreshNotes(); openNote(source, note);
-        }, ex -> showError("Could not create note", ex.getMessage())));
+        Dialogs.prompt(window(), "New note", "Give your TXT note a title.", "Untitled note", "Create",
+                title -> FxUtil.async(() -> noteService.createNote(title), note -> { refreshNotes(); openNote(source, note); },
+                        ex -> showError("Could not create note", ex.getMessage())));
     }
 
     // ---------------------------------------------------------------- tabs
 
     private void addHomeTab() {
+        TabEntry entry = new TabEntry();
+        if (bindHome(entry)) addEntry(entry);
+    }
+
+    /** Turns {@code entry} into a Home tab (new tab, or an editor tab going Back). */
+    private boolean bindHome(TabEntry entry) {
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/deepnote/fx/home-view.fxml"));
             Node view = loader.load(); HomeViewController controller = loader.getController();
-            TabEntry entry = new TabEntry(); entry.home = controller; entry.content = view; entry.setTitle("Home");
+            entry.home = controller; entry.editor = null; entry.content = view; entry.setTitle("Home"); entry.updateDot();
             controller.setNotes(items);
             controller.setOpenNote(note -> openNote(entry, note));
             controller.setCreateNote(() -> promptCreate(entry));
             controller.setStateListener(() -> { if (entry == current) refreshStatus(); });
-            addEntry(entry);
-        } catch (IOException ex) { showError("Could not open Home", ex.getMessage()); }
+            return true;
+        } catch (IOException ex) { showError("Could not open Home", ex.getMessage()); return false; }
+    }
+
+    /** Back button: leaves the note (asking Save/Discard/Cancel if dirty) and returns this tab to Home. */
+    private void goBack() {
+        TabEntry entry = current;
+        if (entry == null || entry.editor == null) return;
+        entry.editor.requestClose(() -> {
+            if (bindHome(entry)) { select(entry); refreshNotes(); }
+        });
     }
 
     private void addEntry(TabEntry entry) {
@@ -137,6 +167,7 @@ public final class FoundationController {
         current = entry;
         workspace.getChildren().setAll(entry.content);
         entries.forEach(TabEntry::updateActive);
+        FxUtil.show(backButton, entry.editor != null);
         refreshStatus();
         if (entry.home != null) entry.home.focusSearch();
         if (entry.editor != null) entry.editor.focusEditor();
@@ -194,15 +225,7 @@ public final class FoundationController {
 
     private void refreshStatus() {
         if (current == null) return;
-        String[] text;
-        if (current.home != null) {
-            text = current.home.status();
-            statusPill.setText("Local Workspace"); setDot(pillDot, "dot-blue");
-        } else {
-            text = current.editor.status();
-            boolean dirty = current.editor.isDirty();
-            statusPill.setText(dirty ? "Unsaved changes" : "Saved"); setDot(pillDot, dirty ? "dot-amber" : "dot-green");
-        }
+        String[] text = current.home != null ? current.home.status() : current.editor.status();
         statusLeft.setText(text[0]); statusRight.setText(text[1]);
     }
 
@@ -211,8 +234,137 @@ public final class FoundationController {
         dot.getStyleClass().add(styleClass);
     }
 
-    private void showError(String title, String message) {
-        Alert alert = new Alert(Alert.AlertType.ERROR, message == null ? title : message, ButtonType.OK);
-        alert.setTitle(title); alert.showAndWait();
+    private void showError(String title, String message) { Dialogs.message(window(), title, message == null ? title : message); }
+
+    private javafx.stage.Window window() { return root.getScene() == null ? null : root.getScene().getWindow(); }
+
+    // ---------------------------------------------------------------- window chrome (undecorated stage)
+
+    private void setupWindowChrome() {
+        backButton.setGraphic(iconBox(FxUtil.BACK)); backButton.setTooltip(new Tooltip("Back to Home"));
+        backButton.setOnAction(e -> goBack()); FxUtil.show(backButton, false);
+        minButton.setGraphic(iconBox(FxUtil.MINIMIZE)); minButton.setTooltip(new Tooltip("Minimize"));
+        maxButton.setGraphic(iconBox(FxUtil.MAXIMIZE)); maxButton.setTooltip(new Tooltip("Maximize"));
+        closeButton.setGraphic(iconBox(FxUtil.CLOSE)); closeButton.setTooltip(new Tooltip("Close"));
+        minButton.setOnAction(e -> { if (stage != null) stage.setIconified(true); });
+        maxButton.setOnAction(e -> toggleMaximize());
+        closeButton.setOnAction(e -> closeWindow());
+        topBar.setOnMousePressed(this::barPressed);
+        topBar.setOnMouseDragged(this::barDragged);
+        topBar.setOnMouseReleased(e -> dragging = false);
+    }
+
+    private static Node iconBox(String path) { StackPane box = new StackPane(FxUtil.icon(path)); box.setMinSize(16, 16); return box; }
+
+    private void attachStage(Stage target, Scene scene) {
+        if (stage == target) return;
+        stage = target;
+        stage.setOnCloseRequest(e -> { e.consume(); closeWindow(); });
+        scene.addEventFilter(MouseEvent.MOUSE_MOVED, this::edgeMoved);
+        scene.addEventFilter(MouseEvent.MOUSE_PRESSED, this::edgePressed);
+        scene.addEventFilter(MouseEvent.MOUSE_DRAGGED, this::edgeDragged);
+        scene.addEventFilter(MouseEvent.MOUSE_RELEASED, e -> resizeMask = 0);
+    }
+
+    /** Checks every dirty editor (Save / Discard / Cancel) before the app exits. */
+    private void closeWindow() { confirmClosing(new ArrayList<>(entries).iterator()); }
+
+    private void confirmClosing(Iterator<TabEntry> remaining) {
+        while (remaining.hasNext()) {
+            TabEntry entry = remaining.next();
+            if (entry.editor != null && entry.editor.isDirty()) {
+                select(entry);
+                entry.editor.requestClose(() -> confirmClosing(remaining));
+                return;
+            }
+        }
+        Platform.exit();
+    }
+
+    private void toggleMaximize() {
+        if (stage == null) return;
+        if (maximized) { restoreWindow(); return; }
+        restoreBounds = new double[] { stage.getX(), stage.getY(), stage.getWidth(), stage.getHeight() };
+        List<Screen> screens = Screen.getScreensForRectangle(stage.getX(), stage.getY(), stage.getWidth(), stage.getHeight());
+        Rectangle2D area = (screens.isEmpty() ? Screen.getPrimary() : screens.get(0)).getVisualBounds(); // never covers the taskbar
+        stage.setX(area.getMinX()); stage.setY(area.getMinY()); stage.setWidth(area.getWidth()); stage.setHeight(area.getHeight());
+        maximized = true; updateMaxIcon();
+    }
+
+    private void restoreWindow() {
+        if (restoreBounds != null) { stage.setX(restoreBounds[0]); stage.setY(restoreBounds[1]); stage.setWidth(restoreBounds[2]); stage.setHeight(restoreBounds[3]); }
+        maximized = false; updateMaxIcon();
+    }
+
+    private void updateMaxIcon() {
+        maxButton.setGraphic(iconBox(maximized ? FxUtil.RESTORE : FxUtil.MAXIMIZE));
+        maxButton.getTooltip().setText(maximized ? "Restore" : "Maximize");
+    }
+
+    private boolean interactive(Object target) {
+        Node node = target instanceof Node n ? n : null;
+        while (node != null && node != topBar) {
+            if (node instanceof ButtonBase || node.getStyleClass().contains("tab-pill")) return true;
+            node = node.getParent();
+        }
+        return false;
+    }
+
+    private void barPressed(MouseEvent e) {
+        if (stage == null) return;
+        dragging = !interactive(e.getTarget());
+        if (!dragging) return;
+        if (e.getClickCount() == 2) { toggleMaximize(); dragging = false; return; }
+        dragOffsetX = e.getScreenX() - stage.getX(); dragOffsetY = e.getScreenY() - stage.getY();
+    }
+
+    private void barDragged(MouseEvent e) {
+        if (stage == null || !dragging) return;
+        if (maximized) { // un-maximize proportionally so the cursor stays at the same relative spot on the bar
+            double ratio = dragOffsetX / Math.max(1, stage.getWidth());
+            restoreWindow(); dragOffsetX = ratio * stage.getWidth();
+        }
+        stage.setX(e.getScreenX() - dragOffsetX); stage.setY(e.getScreenY() - dragOffsetY);
+    }
+
+    private int edgeMask(MouseEvent e, Scene scene) {
+        int mask = 0;
+        if (e.getSceneX() < EDGE) mask |= 1;
+        if (e.getSceneX() > scene.getWidth() - EDGE) mask |= 2;
+        if (e.getSceneY() < EDGE) mask |= 4;
+        if (e.getSceneY() > scene.getHeight() - EDGE) mask |= 8;
+        return mask;
+    }
+
+    private void edgeMoved(MouseEvent e) {
+        Scene scene = root.getScene();
+        int mask = maximized ? 0 : edgeMask(e, scene);
+        scene.setCursor(switch (mask) {
+            case 1, 2 -> Cursor.H_RESIZE; case 4, 8 -> Cursor.V_RESIZE;
+            case 5, 10 -> Cursor.NW_RESIZE; case 6, 9 -> Cursor.NE_RESIZE;
+            default -> Cursor.DEFAULT;
+        });
+    }
+
+    private void edgePressed(MouseEvent e) {
+        if (maximized || stage == null) return;
+        resizeMask = edgeMask(e, root.getScene());
+        if (resizeMask == 0) return;
+        startX = stage.getX(); startY = stage.getY(); startW = stage.getWidth(); startH = stage.getHeight();
+        startScreenX = e.getScreenX(); startScreenY = e.getScreenY();
+        e.consume();
+    }
+
+    private void edgeDragged(MouseEvent e) {
+        if (resizeMask == 0 || stage == null) return;
+        double dx = e.getScreenX() - startScreenX, dy = e.getScreenY() - startScreenY;
+        double minW = stage.getMinWidth(), minH = stage.getMinHeight();
+        double x = startX, y = startY, w = startW, h = startH;
+        if ((resizeMask & 2) != 0) w = Math.max(minW, startW + dx);
+        if ((resizeMask & 1) != 0) { w = Math.max(minW, startW - dx); x = startX + (startW - w); }
+        if ((resizeMask & 8) != 0) h = Math.max(minH, startH + dy);
+        if ((resizeMask & 4) != 0) { h = Math.max(minH, startH - dy); y = startY + (startH - h); }
+        stage.setX(x); stage.setY(y); stage.setWidth(w); stage.setHeight(h);
+        e.consume();
     }
 }

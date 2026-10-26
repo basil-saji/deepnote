@@ -11,7 +11,6 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.StackPane;
 
 import java.time.Instant;
-import java.util.Optional;
 import java.util.function.Consumer;
 
 /** Plain-text note editor: centred reading column, icon toolbar and borderless text area. */
@@ -110,16 +109,11 @@ public final class EditorViewController {
     /** Runs {@code proceed} once it is safe to close: immediately if clean, after Save/Discard if dirty, never on Cancel. */
     public void requestClose(Runnable proceed) {
         if (!dirty.get()) { proceed.run(); return; }
-        Alert dialog = new Alert(Alert.AlertType.CONFIRMATION, "Save changes to “" + note.title() + "” before closing?", ButtonType.CANCEL, ButtonType.NO, ButtonType.YES);
-        Optional<ButtonType> answer = dialog.showAndWait();
-        if (answer.isEmpty() || answer.get() == ButtonType.CANCEL) return;
-        if (answer.get() == ButtonType.YES) save(proceed); else proceed.run();
+        Dialogs.unsaved(owner(), "Unsaved changes", "Save changes to “" + note.title() + "” before leaving?", () -> save(proceed), proceed);
     }
 
     private void rename() {
-        TextInputDialog dialog = new TextInputDialog(note.title());
-        dialog.setTitle("Rename note"); dialog.setHeaderText("Choose a new note title");
-        dialog.showAndWait().ifPresent(value -> {
+        Dialogs.prompt(owner(), "Rename note", "Choose a new title for this note.", note.title(), "Rename", value -> {
             Note target = note;
             FxUtil.async(() -> noteService.renameNote(target, value), renamed -> {
                 note = renamed; titleLabel.setText(note.title()); renamedAction.accept(note.title());
@@ -128,12 +122,13 @@ public final class EditorViewController {
     }
 
     private void delete() {
-        Alert dialog = new Alert(Alert.AlertType.CONFIRMATION, "Delete “" + note.title() + "”?", ButtonType.CANCEL, ButtonType.OK);
-        dialog.showAndWait().filter(ButtonType.OK::equals).ifPresent(ok -> {
+        Dialogs.confirm(owner(), "Delete note", "“" + note.title() + "” will be permanently deleted. This can’t be undone.", "Delete", true, () -> {
             Note target = note;
             FxUtil.async(() -> { noteService.deleteNote(target); return Boolean.TRUE; }, done -> deletedAction.run(), ex -> error(ex.getMessage()));
         });
     }
+
+    private javafx.stage.Window owner() { return root.getScene() == null ? null : root.getScene().getWindow(); }
 
     private void setIcon(Button button, String path, String tooltip) {
         StackPane graphic = new StackPane(FxUtil.icon(path)); graphic.setMinSize(16, 16);
@@ -147,5 +142,5 @@ public final class EditorViewController {
                 + " min read • Last edited " + FxUtil.relativeTime(lastEdited));
     }
 
-    private void error(String message) { new Alert(Alert.AlertType.ERROR, message == null ? "Operation failed." : message, ButtonType.OK).showAndWait(); }
+    private void error(String message) { Dialogs.message(owner(), "Something went wrong", message == null ? "Operation failed." : message); }
 }

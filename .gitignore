@@ -4,3 +4,11 @@ target/
 .deepnote/
 notes/
 *.log
+
+# Local environment variables and credentials
+.env
+.env.*
+!.env.example
+
+# Local database files
+db-data/

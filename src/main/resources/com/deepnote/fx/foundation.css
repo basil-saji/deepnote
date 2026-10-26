@@ -1,55 +1,267 @@
+/* ==========================================================================
+   DeepNote — foundation.css
+   Palette: single blue accent family.
+   ========================================================================== */
 .root {
+    /* custom tokens */
     -primary: #4C8DFF; -secondary: #8AB4FF; -tertiary: #A6C8FF;
-    -background: #0D0F12; -surface: #1B1D22; -border: #30343D;
+    -background: #0D0F12; -surface: #1B1D22; -surface-hover: #22252B; -surface-raised: #202329;
+    -border: #30343D; -border-subtle: #252932;
     -text-primary: #F1F3F6; -text-muted: #969DA9;
     -success: #34D399; -warning: #FBBF24; -danger: #F87171;
-    -surface-hover: #22252B; -border-subtle: #252932;
+    -primary-subtle: rgba(76, 141, 255, 0.15);
+    -primary-glow: rgba(76, 141, 255, 0.22);
+    -primary-selection: rgba(76, 141, 255, 0.30);
+
+    /* AtlantaFX PrimerDark overrides */
+    -fx-accent: #4C8DFF; -fx-focus-color: #4C8DFF; -fx-faint-focus-color: transparent;
+    -fx-selection-bar: #4C8DFF; -fx-selection-bar-non-focused: #4C8DFF;
+    -color-accent-emphasis: #4C8DFF; -color-accent-fg: #4C8DFF;
+    -color-accent-muted: rgba(76, 141, 255, 0.40);
+    -color-accent-subtle: rgba(76, 141, 255, 0.15);
+    -color-bg-default: #0D0F12; -color-bg-subtle: #1B1D22; -color-bg-inset: #0D0F12; -color-bg-overlay: #1B1D22;
+    -color-border-default: #30343D; -color-border-muted: #252932;
+    -color-fg-default: #F1F3F6; -color-fg-muted: #969DA9; -color-fg-emphasis: #F1F3F6;
+
     -fx-font-family: "Inter", "Segoe UI", sans-serif;
     -fx-background-color: -background; -fx-text-fill: -text-primary;
-    -fx-focus-color: -primary; -fx-faint-focus-color: transparent;
-    -fx-accent: -primary; -fx-selection-bar: -primary; -fx-selection-bar-non-focused: -primary;
 }
-.app-root, .home-page, .editor-view, .editor-column { -fx-background-color: -background; }
-.app-header { -fx-min-height: 42; -fx-padding: 0 24; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0; }
-.brand { -fx-text-fill: -text-primary; -fx-font-size: 14px; -fx-font-weight: bold; }
-.mono-label, .status-line, .section-label, .card-tag { -fx-font-family: "JetBrains Mono", "Consolas", monospace; -fx-font-size: 10px; -fx-text-fill: -text-muted; }
-.tab-bar { -fx-padding: 0 18; -fx-background-color: -background; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0; }
-.workspace-tabs, .workspace-tabs .tab-header-area, .tab-bar .tab-pane, .tab-bar .tab-pane .tab-header-area { -fx-background-color: transparent; }
-.tab-bar .tab { -fx-background-color: transparent; -fx-padding: 11 16; }
-.tab-bar .tab:selected { -fx-background-color: -surface; -fx-border-color: -primary; -fx-border-width: 0 0 2 0; }
-.tab-bar .tab-label { -fx-text-fill: -text-muted; -fx-font-size: 13px; }
-.tab-bar .tab:selected .tab-label { -fx-text-fill: -text-primary; }
-.status-line { -fx-padding: 7 24; -fx-border-color: -border-subtle; -fx-border-width: 1 0 0 0; }
-.home-page { -fx-padding: 32 40 40 40; }
-.page-title { -fx-text-fill: -text-primary; -fx-font-size: 34px; -fx-font-weight: bold; }
-.search-field, .composer { -fx-min-height: 46; -fx-background-color: -surface; -fx-text-fill: -text-primary; -fx-prompt-text-fill: -text-muted; -fx-border-color: -border; -fx-border-radius: 9; -fx-background-radius: 9; -fx-padding: 11 14; }
-.primary-button { -fx-background-color: -primary; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 8; -fx-padding: 10 15; }
-.primary-button:hover { -fx-background-color: -secondary; }
-.primary-button:focused, .secondary-button:focused, .text-button:focused, .icon-button:focused, .view-toggle:focused, .search-field:focused, .composer:focused { -fx-border-color: -primary; -fx-border-width: 1; }
-.secondary-button, .text-button, .icon-button, .view-toggle, .suggestion-button { -fx-background-color: -surface; -fx-text-fill: -text-primary; -fx-border-color: -border; -fx-border-radius: 7; -fx-background-radius: 7; -fx-padding: 9 12; }
-.secondary-button:hover, .text-button:hover, .icon-button:hover, .suggestion-button:hover { -fx-background-color: -surface-hover; -fx-border-color: -secondary; }
-.danger-button { -fx-background-color: -surface; -fx-text-fill: -danger; -fx-border-color: -border; -fx-border-radius: 7; -fx-background-radius: 7; -fx-padding: 9 12; }
-.icon-button { -fx-padding: 8 11; }
-.view-toggle:selected { -fx-background-color: -primary; -fx-text-fill: white; -fx-border-color: -primary; }
-.section-label { -fx-font-weight: bold; }
-.note-card { -fx-background-color: -surface; -fx-border-color: -border-subtle; -fx-border-radius: 11; -fx-background-radius: 11; -fx-padding: 17; -fx-min-height: 150; }
-.note-card:hover { -fx-background-color: -surface-hover; -fx-border-color: -secondary; }
-.card-tag { -fx-text-fill: -secondary; }
-.card-title, .panel-title { -fx-text-fill: -text-primary; -fx-font-size: 16px; -fx-font-weight: bold; }
-.card-preview, .editor-meta, .empty-state { -fx-text-fill: -text-muted; -fx-font-size: 12px; }
-.editor-header { -fx-padding: 30 40 20 40; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0; }
-.editor-title { -fx-text-fill: -text-primary; -fx-font-size: 32px; -fx-font-weight: bold; }
-.note-editor { -fx-background-color: -background; -fx-text-fill: -text-primary; -fx-font-family: "Inter", "Segoe UI", sans-serif; -fx-font-size: 17px; -fx-highlight-fill: -primary; -fx-highlight-text-fill: white; -fx-border-color: transparent; }
-.note-editor .content { -fx-background-color: -background; -fx-padding: 30 40; }
-.editor-view > .scroll-pane, .editor-view > .scroll-pane > .viewport, .scroll-pane, .scroll-pane > .viewport { -fx-background-color: -background; }
-.ai-panel { -fx-background-color: -surface; -fx-border-color: -border; -fx-border-width: 0 0 0 1; -fx-padding: 18; -fx-pref-width: 360; -fx-min-width: 300; }
-.ai-header { -fx-padding: 0 0 14 0; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0; }
-.ai-welcome { -fx-padding: 8 0; }
-.message-list { -fx-background-color: transparent; -fx-control-inner-background: -surface; -fx-border-color: transparent; }
-.message-list .list-cell { -fx-background-color: -surface; -fx-text-fill: -text-primary; -fx-padding: 12; -fx-wrap-text: true; }
-.ai-status { -fx-text-fill: -warning; -fx-font-size: 11px; }
-.suggestion-button { -fx-font-size: 11px; -fx-padding: 7 9; }
-.scroll-bar:vertical { -fx-pref-width: 8; -fx-background-color: transparent; }
-.scroll-bar:vertical .thumb { -fx-background-color: -border; -fx-background-radius: 5; }
-.scroll-bar:vertical .track { -fx-background-color: transparent; }
 .label { -fx-text-fill: -text-primary; }
+.app-root, .home-page, .editor-view, .editor-canvas, .workspace { -fx-background-color: -background; }
+
+/* ---------- typography helpers ---------- */
+.mono-label, .status-text, .status-pill, .section-label, .txt-badge, .read-badge, .count-badge,
+.key-badge, .context-pill, .model-pill, .status-online, .status-offline, .meta-text {
+    -fx-font-family: "JetBrains Mono", "Consolas", monospace;
+}
+.mono-label { -fx-font-size: 11px; -fx-text-fill: -text-muted; }
+
+/* ---------- shared scroll / scrollbars ---------- */
+.scroll-pane, .scroll-pane > .viewport, .page-scroll, .page-scroll > .viewport, .chat-scroll, .chat-scroll > .viewport {
+    -fx-background-color: transparent; -fx-background-insets: 0; -fx-padding: 0; -fx-border-color: transparent;
+}
+.scroll-bar:vertical, .scroll-bar:horizontal { -fx-background-color: transparent; }
+.scroll-bar:vertical { -fx-pref-width: 8; }
+.scroll-bar .thumb { -fx-background-color: -border; -fx-background-radius: 5; -fx-background-insets: 0; }
+.scroll-bar .track, .scroll-bar .increment-button, .scroll-bar .decrement-button { -fx-background-color: transparent; -fx-padding: 0; }
+.scroll-bar .increment-arrow, .scroll-bar .decrement-arrow { -fx-padding: 0; -fx-shape: ""; }
+
+/* ---------- icons ---------- */
+.icon-path { -fx-fill: transparent; -fx-stroke: -text-primary; -fx-stroke-width: 1.5; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; }
+
+/* ---------- buttons ---------- */
+.primary-button {
+    -fx-background-color: -primary; -fx-background-insets: 0; -fx-background-radius: 8; -fx-border-color: transparent;
+    -fx-text-fill: -text-primary; -fx-font-weight: bold; -fx-padding: 9 16; -fx-cursor: hand;
+}
+.primary-button:hover { -fx-background-color: -secondary; }
+.primary-button:focused { -fx-background-color: -primary; -fx-border-color: -tertiary; -fx-border-radius: 8; }
+.ask-button {
+    -fx-background-color: -primary; -fx-background-insets: 0; -fx-background-radius: 8; -fx-border-color: transparent;
+    -fx-text-fill: -text-primary; -fx-font-weight: bold; -fx-font-size: 13px;
+    -fx-min-height: 36; -fx-pref-height: 36; -fx-max-height: 36; -fx-padding: 0 16; -fx-cursor: hand;
+}
+.ask-button:hover { -fx-background-color: -secondary; }
+
+.icon-square {
+    -fx-min-width: 36; -fx-pref-width: 36; -fx-max-width: 36; -fx-min-height: 36; -fx-pref-height: 36; -fx-max-height: 36;
+    -fx-padding: 0; -fx-background-color: -surface; -fx-background-insets: 0; -fx-background-radius: 8;
+    -fx-border-color: -border; -fx-border-radius: 8; -fx-cursor: hand;
+}
+.icon-square:hover { -fx-background-color: -surface-hover; -fx-border-color: -secondary; }
+.icon-square.danger:hover { -fx-border-color: -danger; }
+.icon-square.danger:hover .icon-path { -fx-stroke: -danger; }
+.icon-square.dirty { -fx-border-color: -primary; }
+.icon-square.dirty .icon-path { -fx-stroke: -primary; }
+.icon-square:focused { -fx-border-color: -primary; }
+
+.icon-button {
+    -fx-min-width: 28; -fx-pref-width: 28; -fx-max-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-max-height: 28;
+    -fx-padding: 0; -fx-background-color: transparent; -fx-background-insets: 0; -fx-background-radius: 7;
+    -fx-text-fill: -text-muted; -fx-font-size: 15px; -fx-cursor: hand;
+}
+.icon-button:hover { -fx-background-color: -surface-raised; -fx-text-fill: -text-primary; }
+
+.suggestion-button, .copy-button {
+    -fx-background-color: -surface-raised; -fx-background-insets: 0; -fx-background-radius: 8;
+    -fx-border-color: -border; -fx-border-radius: 8; -fx-text-fill: -text-primary; -fx-font-size: 12px;
+    -fx-padding: 6 10; -fx-cursor: hand;
+}
+.suggestion-button:hover, .copy-button:hover { -fx-background-color: -surface-hover; -fx-border-color: -primary; }
+.suggestion-button { -fx-alignment: CENTER_LEFT; }
+
+/* ---------- top bar & tab strip ---------- */
+.top-bar {
+    -fx-min-height: 42; -fx-pref-height: 42; -fx-max-height: 42; -fx-padding: 0 12 0 10; -fx-spacing: 12;
+    -fx-background-color: -background; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0;
+}
+.tab-pill {
+    -fx-min-height: 32; -fx-pref-height: 32; -fx-max-height: 32; -fx-padding: 0 6 0 12;
+    -fx-background-color: transparent; -fx-background-radius: 8;
+    -fx-border-color: transparent; -fx-border-width: 1 1 2 1; -fx-border-radius: 8; -fx-cursor: hand;
+}
+.tab-pill:hover { -fx-background-color: -surface-hover; }
+.tab-pill.active { -fx-background-color: -surface; -fx-border-color: -border -border -primary -border; }
+.tab-title { -fx-text-fill: -text-muted; -fx-font-size: 13px; }
+.tab-pill.active .tab-title { -fx-text-fill: -text-primary; }
+.tab-close {
+    -fx-min-width: 18; -fx-pref-width: 18; -fx-min-height: 18; -fx-pref-height: 18; -fx-padding: 0;
+    -fx-background-color: transparent; -fx-background-insets: 0; -fx-background-radius: 5;
+    -fx-text-fill: -text-muted; -fx-font-size: 14px; -fx-cursor: hand;
+}
+.tab-close:hover { -fx-background-color: -surface-raised; -fx-text-fill: -text-primary; }
+.tab-add {
+    -fx-min-width: 28; -fx-pref-width: 28; -fx-max-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-max-height: 28;
+    -fx-padding: 0; -fx-background-color: -surface; -fx-background-insets: 0; -fx-background-radius: 8;
+    -fx-border-color: -border; -fx-border-radius: 8; -fx-text-fill: -text-primary; -fx-font-size: 15px; -fx-cursor: hand;
+}
+.tab-add:hover { -fx-background-color: -surface-hover; -fx-border-color: -primary; }
+.dot-blue { -fx-fill: -primary; }
+.dot-green { -fx-fill: -success; }
+.dot-amber { -fx-fill: -warning; }
+.status-pill {
+    -fx-font-size: 11px; -fx-text-fill: -text-muted; -fx-padding: 4 10; -fx-graphic-text-gap: 7;
+    -fx-background-color: -surface; -fx-background-radius: 12; -fx-border-color: -border-subtle; -fx-border-radius: 12;
+}
+
+/* ---------- bottom status bar ---------- */
+.bottom-bar {
+    -fx-min-height: 26; -fx-pref-height: 26; -fx-max-height: 26; -fx-padding: 0 16;
+    -fx-background-color: -background; -fx-border-color: -border-subtle; -fx-border-width: 1 0 0 0;
+}
+.status-text { -fx-font-size: 11px; -fx-text-fill: -text-muted; }
+
+/* ---------- home: header, search bar, controls ---------- */
+.home-page { -fx-padding: 36 40 24 40; }
+.page-title { -fx-text-fill: -text-primary; -fx-font-size: 34px; -fx-font-weight: bold; }
+.search-bar {
+    -fx-min-height: 46; -fx-pref-height: 46; -fx-max-height: 46; -fx-padding: 0 12; -fx-spacing: 10;
+    -fx-background-color: -surface; -fx-background-radius: 10; -fx-border-color: -border; -fx-border-radius: 10;
+}
+.search-bar.focused { -fx-border-color: -primary; }
+.search-bar.active { -fx-border-color: -primary; -fx-effect: dropshadow(gaussian, rgba(76, 141, 255, 0.35), 14, 0.1, 0, 0); }
+.search-input, .search-input:focused {
+    -fx-background-color: transparent; -fx-background-insets: 0; -fx-border-color: transparent; -fx-padding: 0;
+    -fx-text-fill: -text-primary; -fx-prompt-text-fill: -text-muted; -fx-font-size: 14px;
+    -fx-highlight-fill: -primary-selection; -fx-highlight-text-fill: -text-primary;
+}
+.search-icon .icon-path { -fx-stroke: -text-muted; }
+.clear-button {
+    -fx-min-width: 22; -fx-pref-width: 22; -fx-min-height: 22; -fx-pref-height: 22; -fx-padding: 0;
+    -fx-background-color: -surface-raised; -fx-background-insets: 0; -fx-background-radius: 11;
+    -fx-text-fill: -text-muted; -fx-font-size: 13px; -fx-cursor: hand;
+}
+.clear-button:hover { -fx-text-fill: -text-primary; -fx-background-color: -surface-hover; }
+.key-badge {
+    -fx-font-size: 10px; -fx-text-fill: -text-muted; -fx-padding: 3 7;
+    -fx-background-color: -surface-raised; -fx-background-radius: 6; -fx-border-color: -border; -fx-border-radius: 6;
+}
+.count-label { -fx-text-fill: -text-muted; -fx-font-size: 13px; }
+.combo-box.sort-box, .sort-box {
+    -fx-background-color: -surface; -fx-background-insets: 0; -fx-background-radius: 8;
+    -fx-border-color: -border; -fx-border-radius: 8; -fx-font-size: 12px;
+}
+.sort-box .list-cell { -fx-background-color: transparent; -fx-text-fill: -text-primary; }
+.sort-box .arrow { -fx-background-color: -text-muted; }
+.combo-box-popup .list-view { -fx-background-color: -surface; -fx-border-color: -border; }
+.combo-box-popup .list-cell { -fx-background-color: -surface; -fx-text-fill: -text-primary; }
+.combo-box-popup .list-cell:hover, .combo-box-popup .list-cell:selected { -fx-background-color: -primary-subtle; }
+
+.segmented { -fx-padding: 3; -fx-spacing: 2; -fx-background-color: -surface; -fx-background-radius: 9; -fx-border-color: -border-subtle; -fx-border-radius: 9; }
+.segmented .toggle-button {
+    -fx-background-color: transparent; -fx-background-insets: 0; -fx-background-radius: 7; -fx-border-color: transparent;
+    -fx-text-fill: -text-muted; -fx-font-family: "JetBrains Mono", "Consolas", monospace; -fx-font-size: 11px; -fx-font-weight: bold;
+    -fx-padding: 5 12; -fx-cursor: hand;
+}
+.segmented .toggle-button:hover { -fx-text-fill: -text-primary; }
+.segmented .toggle-button:selected { -fx-background-color: -primary; -fx-text-fill: -text-primary; }
+
+.section-label { -fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: -text-muted; }
+.empty-state { -fx-text-fill: -text-muted; -fx-font-size: 13px; -fx-padding: 24 0; }
+
+/* ---------- home: note cards ---------- */
+.note-card {
+    -fx-background-color: -surface; -fx-background-radius: 12; -fx-border-color: -border; -fx-border-radius: 12;
+    -fx-padding: 18; -fx-cursor: hand;
+}
+.note-card:hover { -fx-border-color: -primary; -fx-background-color: -surface-hover; }
+.txt-badge {
+    -fx-font-size: 10px; -fx-text-fill: -secondary; -fx-padding: 2 7;
+    -fx-background-color: -primary-subtle; -fx-background-radius: 6;
+}
+.card-title { -fx-text-fill: -text-primary; -fx-font-size: 16px; -fx-font-weight: bold; }
+.card-preview { -fx-text-fill: -text-muted; -fx-font-size: 13px; -fx-line-spacing: 2; }
+.card-divider, .divider-line { -fx-min-height: 1; -fx-pref-height: 1; -fx-max-height: 1; -fx-background-color: -border-subtle; }
+.read-badge {
+    -fx-font-size: 10px; -fx-text-fill: -text-muted; -fx-padding: 2 8;
+    -fx-background-color: -surface-raised; -fx-background-radius: 8; -fx-border-color: -border-subtle; -fx-border-radius: 8;
+}
+
+/* ---------- home: dedicated search view ---------- */
+.search-heading { -fx-text-fill: -text-primary; -fx-font-size: 15px; -fx-font-weight: semibold; }
+.count-badge {
+    -fx-font-size: 11px; -fx-text-fill: -secondary; -fx-padding: 3 10;
+    -fx-background-color: -surface; -fx-background-radius: 12; -fx-border-color: -border-subtle; -fx-border-radius: 12;
+}
+.result-card {
+    -fx-background-color: -surface; -fx-background-radius: 12; -fx-border-color: -border; -fx-border-radius: 12;
+    -fx-padding: 18 20; -fx-cursor: hand;
+}
+.result-card:hover, .result-card.selected { -fx-border-color: -primary; }
+.result-card.selected { -fx-background-color: -surface-hover; }
+.icon-badge { -fx-background-color: -surface-raised; -fx-background-radius: 7; }
+.icon-badge .icon-path { -fx-stroke: -primary; }
+.flow-text { -fx-fill: -text-muted; }
+.title-text { -fx-fill: -text-primary; -fx-font-size: 16px; -fx-font-weight: bold; }
+.snippet-text { -fx-fill: -text-muted; -fx-font-size: 13px; }
+.match-chip { -fx-background-color: -primary-glow; -fx-background-radius: 4; -fx-padding: 0 3; -fx-text-fill: -tertiary; }
+.title-text-hit { -fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: -tertiary; }
+.snippet-text-hit { -fx-font-size: 13px; -fx-font-weight: bold; -fx-text-fill: -secondary; }
+.meta-text { -fx-font-size: 11px; -fx-text-fill: -text-muted; }
+
+/* ---------- editor ---------- */
+.editor-title { -fx-text-fill: -text-primary; -fx-font-size: 32px; -fx-font-weight: bold; }
+.editor-meta { -fx-text-fill: -text-muted; -fx-font-size: 12px; -fx-font-family: "JetBrains Mono", "Consolas", monospace; }
+.note-editor, .note-editor:focused, .note-editor:hover {
+    -fx-background-color: -background; -fx-background-insets: 0; -fx-background-radius: 0;
+    -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0;
+    -fx-text-fill: -text-primary; -fx-font-family: "Inter", "Segoe UI", sans-serif; -fx-font-size: 16.5px;
+    -fx-highlight-fill: -primary-selection; -fx-highlight-text-fill: -text-primary;
+    -fx-focus-color: transparent; -fx-faint-focus-color: transparent;
+}
+.text-area.note-editor .content { -fx-background-color: -background; -fx-background-insets: 0; -fx-border-color: transparent; -fx-padding: 14 0 0 0; }
+.text-area.note-editor .scroll-pane, .text-area.note-editor .scroll-pane > .viewport { -fx-background-color: -background; -fx-border-color: transparent; }
+
+/* ---------- AI panel ---------- */
+.ai-panel { -fx-background-color: -background; -fx-border-color: -border-subtle; -fx-border-width: 0 0 0 1; -fx-pref-width: 360; -fx-min-width: 310; }
+.ai-header { -fx-min-height: 52; -fx-pref-height: 52; -fx-max-height: 52; -fx-padding: 0 12 0 14; -fx-spacing: 10; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0; }
+.ai-badge { -fx-min-width: 28; -fx-pref-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-background-color: -primary; -fx-background-radius: 8; }
+.ai-badge-text { -fx-text-fill: -text-primary; -fx-font-size: 14px; -fx-font-weight: bold; }
+.panel-title { -fx-text-fill: -text-primary; -fx-font-size: 14px; -fx-font-weight: bold; }
+.model-pill { -fx-font-size: 10px; -fx-text-fill: -secondary; -fx-padding: 2 7; -fx-background-color: -surface; -fx-background-radius: 8; -fx-border-color: -border-subtle; -fx-border-radius: 8; }
+.status-online { -fx-font-size: 10px; -fx-text-fill: -success; }
+.status-offline { -fx-font-size: 10px; -fx-text-fill: -text-muted; }
+.chat-box { -fx-padding: 16 14; -fx-spacing: 14; }
+.ai-welcome { -fx-padding: 14; -fx-background-color: -surface; -fx-background-radius: 12; -fx-border-color: -border; -fx-border-radius: 12; }
+.chat-meta { -fx-font-family: "JetBrains Mono", "Consolas", monospace; -fx-font-size: 10px; -fx-text-fill: -text-muted; }
+.user-bubble { -fx-background-color: -primary; -fx-background-radius: 14 14 4 14; -fx-padding: 10 14; -fx-text-fill: -text-primary; -fx-font-size: 13px; }
+.ai-card { -fx-background-color: -surface; -fx-background-radius: 12; -fx-border-color: -border; -fx-border-radius: 12; -fx-padding: 12 14; -fx-spacing: 10; }
+.ai-card.error { -fx-border-color: -danger; }
+.ai-text { -fx-text-fill: -text-primary; -fx-font-size: 13px; -fx-line-spacing: 2; }
+.ai-thinking { -fx-text-fill: -text-muted; -fx-font-size: 12px; }
+.composer-box { -fx-background-color: -surface; -fx-background-radius: 12; -fx-border-color: -border; -fx-border-radius: 12; -fx-padding: 10 10 8 12; -fx-spacing: 6; }
+.composer-box.focus-within { -fx-border-color: -primary; }
+.composer-input, .composer-input:focused {
+    -fx-background-color: transparent; -fx-background-insets: 0; -fx-border-color: transparent; -fx-padding: 0;
+    -fx-text-fill: -text-primary; -fx-prompt-text-fill: -text-muted; -fx-font-size: 13px;
+    -fx-highlight-fill: -primary-selection; -fx-highlight-text-fill: -text-primary;
+}
+.composer-input .content, .composer-input .scroll-pane, .composer-input .scroll-pane > .viewport { -fx-background-color: transparent; }
+.context-pill { -fx-font-size: 10px; -fx-text-fill: -tertiary; -fx-padding: 3 8; -fx-background-color: -primary-subtle; -fx-background-radius: 8; }
+.send-button {
+    -fx-min-width: 28; -fx-pref-width: 28; -fx-max-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-max-height: 28;
+    -fx-padding: 0; -fx-background-color: -primary; -fx-background-insets: 0; -fx-background-radius: 8;
+    -fx-text-fill: -text-primary; -fx-font-size: 14px; -fx-font-weight: bold; -fx-cursor: hand;
+}
+.send-button:hover { -fx-background-color: -secondary; }
+.send-button:disabled { -fx-opacity: 0.5; }

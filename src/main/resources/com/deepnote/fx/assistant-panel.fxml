@@ -1,10 +1,40 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.geometry.Insets?>
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
-<VBox xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.AssistantPanelController" spacing="12" styleClass="ai-panel">
-    <HBox alignment="CENTER_LEFT" spacing="8" styleClass="ai-header"><VBox><Label text="DeepNote AI" styleClass="panel-title"/><Label fx:id="statusLabel" styleClass="mono-label"/></VBox><Region HBox.hgrow="ALWAYS"/><Button fx:id="clearButton" text="Clear" styleClass="text-button"/><Button fx:id="closeButton" text="×" styleClass="icon-button"/></HBox>
-    <VBox fx:id="welcome" spacing="8" styleClass="ai-welcome"><Label text="Chat with this note" styleClass="panel-title"/><Label text="Questions use the current editor content and stay local to this session." wrapText="true" styleClass="card-preview"/><FlowPane fx:id="suggestions" hgap="6" vgap="6"/></VBox>
-    <ListView fx:id="messages" VBox.vgrow="ALWAYS" styleClass="message-list"/>
-    <Label fx:id="thinkingLabel" text="" styleClass="ai-status"/>
-    <HBox spacing="8" alignment="BOTTOM_RIGHT"><TextArea fx:id="composer" promptText="Ask about this note…" prefRowCount="3" wrapText="true" styleClass="composer" HBox.hgrow="ALWAYS"/><Button fx:id="sendButton" text="Send" styleClass="primary-button"/></HBox>
+<VBox xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.AssistantPanelController" prefWidth="360.0" minWidth="310.0" styleClass="ai-panel">
+    <HBox alignment="CENTER_LEFT" styleClass="ai-header">
+        <StackPane styleClass="ai-badge"><Label text="✦" styleClass="ai-badge-text"/></StackPane>
+        <VBox spacing="2" HBox.hgrow="ALWAYS" minWidth="0">
+            <HBox alignment="CENTER_LEFT" spacing="8">
+                <Label text="DeepNote AI" styleClass="panel-title"/>
+                <Label fx:id="modelPill" styleClass="model-pill"/>
+            </HBox>
+            <Label fx:id="statusLabel" text="● Checking…" styleClass="status-offline"/>
+        </VBox>
+        <Button fx:id="clearButton" text="↻" styleClass="icon-button" focusTraversable="false"/>
+        <Button fx:id="closeButton" text="◫" styleClass="icon-button" focusTraversable="false"/>
+    </HBox>
+    <ScrollPane fx:id="scroll" fitToWidth="true" hbarPolicy="NEVER" styleClass="chat-scroll" VBox.vgrow="ALWAYS">
+        <content>
+            <VBox fx:id="messageBox" styleClass="chat-box">
+                <VBox fx:id="welcome" spacing="8" styleClass="ai-welcome">
+                    <Label text="Chat with this note" styleClass="panel-title"/>
+                    <Label text="Questions use the current editor content and stay local to this session." wrapText="true" styleClass="card-preview"/>
+                    <VBox fx:id="suggestions" spacing="6"/>
+                </VBox>
+            </VBox>
+        </content>
+    </ScrollPane>
+    <VBox spacing="0">
+        <padding><Insets top="8" right="14" bottom="14" left="14"/></padding>
+        <VBox fx:id="composerBox" styleClass="composer-box">
+            <TextArea fx:id="composerInput" promptText="Ask about this note..." prefRowCount="2" wrapText="true" styleClass="composer-input"/>
+            <HBox alignment="CENTER_LEFT" spacing="8">
+                <Label fx:id="contextPill" styleClass="context-pill" maxWidth="220"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Button fx:id="sendButton" text="↑" styleClass="send-button"/>
+            </HBox>
+        </VBox>
+    </VBox>
 </VBox>

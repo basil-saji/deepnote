@@ -1,16 +1,34 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
-<VBox xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.HomeViewController" fx:id="root" spacing="24" styleClass="home-page">
-    <HBox alignment="CENTER_LEFT" spacing="12">
-        <Label text="Good morning 👋" styleClass="page-title" />
-        <Region HBox.hgrow="ALWAYS" />
-        <Button fx:id="newNoteButton" text="+  New note" styleClass="primary-button" />
+<VBox xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.HomeViewController" fx:id="root" spacing="20" styleClass="home-page">
+    <HBox fx:id="headerRow" alignment="CENTER_LEFT" spacing="12">
+        <Label fx:id="greetingLabel" styleClass="page-title"/>
+        <Region HBox.hgrow="ALWAYS"/>
+        <Button fx:id="newNoteButton" text="+  New Note" styleClass="primary-button"/>
     </HBox>
-    <TextField fx:id="searchField" promptText="Search notes by title or content" styleClass="search-field" />
-    <HBox alignment="CENTER_RIGHT" spacing="8">
-        <ToggleButton fx:id="gridButton" text="▦  Grid" styleClass="view-toggle" />
-        <ToggleButton fx:id="listButton" text="☰  List" styleClass="view-toggle" />
+    <HBox fx:id="searchBar" alignment="CENTER_LEFT" styleClass="search-bar">
+        <StackPane fx:id="searchIcon" styleClass="search-icon"/>
+        <TextField fx:id="searchField" promptText="Search notes by title or content..." styleClass="search-input" HBox.hgrow="ALWAYS"/>
+        <Button fx:id="clearButton" text="×" styleClass="clear-button" focusTraversable="false"/>
+        <Label fx:id="shortcutBadge" text="Ctrl+K" styleClass="key-badge"/>
     </HBox>
-    <VBox fx:id="collections" spacing="28" VBox.vgrow="ALWAYS" />
+    <ScrollPane fx:id="scroll" fitToWidth="true" hbarPolicy="NEVER" styleClass="page-scroll" VBox.vgrow="ALWAYS">
+        <content>
+            <VBox fx:id="body" spacing="22">
+                <HBox fx:id="controlsRow" alignment="CENTER_LEFT" spacing="10">
+                    <Label fx:id="countLabel" styleClass="count-label"/>
+                    <Region prefWidth="14"/>
+                    <Label text="Sort by:" styleClass="mono-label"/>
+                    <ComboBox fx:id="sortBox" styleClass="sort-box"/>
+                    <Region HBox.hgrow="ALWAYS"/>
+                    <HBox alignment="CENTER" styleClass="segmented">
+                        <ToggleButton fx:id="gridButton" text="⊞  GRID"/>
+                        <ToggleButton fx:id="listButton" text="☰  LIST"/>
+                    </HBox>
+                </HBox>
+                <VBox fx:id="collections" spacing="28"/>
+            </VBox>
+        </content>
+    </ScrollPane>
 </VBox>

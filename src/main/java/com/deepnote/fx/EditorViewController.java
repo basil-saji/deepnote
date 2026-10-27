@@ -2,6 +2,7 @@ package com.deepnote.fx;
 
 import com.deepnote.model.Note;
 import com.deepnote.service.NoteService;
+import com.deepnote.service.NoteIndexService;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.fxml.FXML;
@@ -22,6 +23,7 @@ public final class EditorViewController {
 
     private final BooleanProperty dirty = new SimpleBooleanProperty(false);
     private NoteService noteService;
+    private NoteIndexService indexService;
     private Note note;
     private Instant lastEdited = Instant.now();
     private String modelName = "";
@@ -49,8 +51,8 @@ public final class EditorViewController {
         dirty.addListener((o, old, value) -> { FxUtil.toggleClass(saveButton, "dirty", value); stateListener.run(); });
     }
 
-    public void configure(NoteService service, Note initial, Instant modified, String model) {
-        noteService = service; note = initial; lastEdited = modified == null ? Instant.now() : modified; modelName = model;
+    public void configure(NoteService service, Note initial, Instant modified, String model, NoteIndexService indexer) {
+        noteService = service; indexService = indexer; note = initial; lastEdited = modified == null ? Instant.now() : modified; modelName = model;
         loading = true; contentArea.setText(initial.content()); loading = false;
         dirty.set(false); titleLabel.setText(initial.title()); updateMetadata();
     }
@@ -67,6 +69,13 @@ public final class EditorViewController {
     public BooleanProperty dirtyProperty() { return dirty; }
     public boolean isAssistantOpen() { return assistantOpen; }
     public void focusEditor() { javafx.application.Platform.runLater(contentArea::requestFocus); }
+    public void highlightPassage(String passage) {
+        if (passage == null || passage.isBlank()) return;
+        javafx.application.Platform.runLater(() -> {
+            String current = contentArea.getText(); int start = current.indexOf(passage.trim());
+            if (start >= 0) { contentArea.requestFocus(); contentArea.selectRange(start, start + passage.trim().length()); }
+        });
+    }
 
     /** Docks (or removes, when null) the AI panel; the toolbar's Ask button is hidden while the panel is open. */
     public void setAssistantPanel(Node panel) {
@@ -102,6 +111,7 @@ public final class EditorViewController {
             note = saved; lastEdited = Instant.now();
             if (snapshot.equals(contentArea.getText())) dirty.set(false);
             titleLabel.setText(note.title()); updateMetadata(); savedAction.run();
+            if (indexService != null) java.util.concurrent.CompletableFuture.runAsync(() -> { try { indexService.index(saved); } catch (Exception ignored) { } });
             if (afterSuccess != null) afterSuccess.run();
         }, ex -> error(ex.getMessage()));
     }

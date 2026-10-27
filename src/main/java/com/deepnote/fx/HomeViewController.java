@@ -2,6 +2,8 @@ package com.deepnote.fx;
 
 import com.deepnote.model.Note;
 import com.deepnote.service.LocalSearchService;
+import com.deepnote.service.VectorSearchService;
+import com.deepnote.model.VectorSearchResult;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.geometry.Bounds;
@@ -41,9 +43,13 @@ public final class HomeViewController {
     private Map<Path, NoteItem> byPath = Map.of();
     private List<NoteItem> results = List.of();
     private boolean recentOnly;
+    private boolean vectorMode;
+    private VectorSearchService vectorSearchService;
+    private List<VectorSearchResult> vectorResults = List.of();
     private int selected;
     private double searchMillis;
     private Consumer<Note> openNote = note -> { };
+    private Consumer<VectorSearchResult> openVectorResult = result -> openNote.accept(new Note(result.title(), result.path(), ""));
     private Runnable createNote = () -> { };
     private Runnable stateListener = () -> { };
 
@@ -76,7 +82,9 @@ public final class HomeViewController {
         render();
     }
     public void setOpenNote(Consumer<Note> callback) { openNote = callback; }
+    public void setOpenVectorResult(Consumer<VectorSearchResult> callback) { openVectorResult = callback; }
     public void setCreateNote(Runnable callback) { createNote = callback; }
+    public void setVectorSearch(VectorSearchService service) { vectorSearchService = service; }
     public void setStateListener(Runnable callback) { stateListener = callback; }
     public void focusSearch() { Platform.runLater(() -> { searchField.requestFocus(); searchField.selectAll(); }); }
 
@@ -164,6 +172,7 @@ public final class HomeViewController {
 
     private void renderSearch() {
         String query = searchField.getText().trim();
+        if (vectorMode && vectorSearchService != null) { searchVector(query); return; }
         List<Note> all = items.stream().map(NoteItem::note).toList();
         long started = System.nanoTime();
         List<Note> matched = searchService.search(all, query);
@@ -187,14 +196,34 @@ public final class HomeViewController {
         Label count = new Label(results.size() + (results.size() == 1 ? " match" : " matches")); count.getStyleClass().add("count-badge");
         Label filterLabel = new Label("FILTER:"); filterLabel.getStyleClass().add("mono-label");
         ToggleGroup group = new ToggleGroup();
-        ToggleButton all = new ToggleButton("All Notes"), recent = new ToggleButton("Recent Only");
+        ToggleButton all = new ToggleButton("Vector"), recent = new ToggleButton("Keyword");
         all.setToggleGroup(group); recent.setToggleGroup(group); (recentOnly ? recent : all).setSelected(true);
         keepOneSelected(group);
-        all.setOnAction(e -> { recentOnly = false; selected = 0; render(); });
-        recent.setOnAction(e -> { recentOnly = true; selected = 0; render(); });
+        all.setOnAction(e -> { vectorMode = true; recentOnly = false; selected = 0; render(); });
+        recent.setOnAction(e -> { vectorMode = false; recentOnly = false; selected = 0; render(); });
         HBox pills = new HBox(all, recent); pills.getStyleClass().add("segmented"); pills.setAlignment(Pos.CENTER);
         HBox row = new HBox(10, heading, count, spacer(), filterLabel, pills); row.setAlignment(Pos.CENTER_LEFT);
         return row;
+    }
+
+    private void searchVector(String query) {
+        collections.getChildren().add(searchHeader());
+        collections.getChildren().add(empty("Searching local embeddings…"));
+        FxUtil.async(() -> vectorSearchService.search(query, 20), value -> {
+            vectorResults = value; searchMillis = 0; collections.getChildren().clear(); collections.getChildren().add(searchHeader());
+            if (value.isEmpty()) { collections.getChildren().add(empty("No indexed notes match that query.")); return; }
+            VBox list = new VBox(14); resultCards.clear();
+            for (VectorSearchResult result : value) { Region card = vectorCard(result); resultCards.add(card); list.getChildren().add(card); }
+            collections.getChildren().add(list); applySelection();
+        }, error -> { collections.getChildren().clear(); collections.getChildren().add(searchHeader()); collections.getChildren().add(empty("Vector search unavailable: " + error.getMessage())); });
+    }
+
+    private Region vectorCard(VectorSearchResult result) {
+        Label title = new Label(result.title()); title.getStyleClass().add("card-title");
+        Label score = new Label(String.format(Locale.ROOT, "Relevance %.0f%%", result.score() * 100)); score.getStyleClass().add("read-badge");
+        Label snippet = new Label(result.chunkText()); snippet.setWrapText(true); snippet.getStyleClass().add("card-preview");
+        VBox card = new VBox(8, new HBox(8, title, spacer(), score), snippet); card.getStyleClass().add("result-card"); card.setCursor(Cursor.HAND);
+        card.setOnMouseClicked(e -> openVectorResult.accept(result)); return card;
     }
 
     private Region resultCard(NoteItem item, String query) {

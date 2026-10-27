@@ -7,6 +7,10 @@ import com.deepnote.config.AppConfig;
 import com.deepnote.model.ChatMessage;
 import com.deepnote.model.Note;
 import com.deepnote.service.NoteService;
+import com.deepnote.service.NoteIndexService;
+import com.deepnote.service.TextChunker;
+import com.deepnote.db.Database;
+import com.deepnote.ai.OllamaEmbeddingClient;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
@@ -44,6 +48,8 @@ public final class FoundationController {
 
     private final AppConfig config = AppConfig.load();
     private final NoteService noteService = new NoteService(config.notesDirectory());
+    private final Database database = new Database(config);
+    private final NoteIndexService indexService = new NoteIndexService(database, new OllamaEmbeddingClient(config.ollamaBaseUrl(), config.embeddingModel(), Duration.ofSeconds(config.requestTimeoutSeconds()), config.embeddingDimensions()), new TextChunker(1200));
     private final AIAssistantService assistantService = new AIAssistantService(
             new ContextManager(config.maxRecentChatTurns(), config.contextCharacterBudget()),
             new OllamaChatModelClient(config.ollamaBaseUrl(), config.chatModelName(), Duration.ofSeconds(config.requestTimeoutSeconds())));
@@ -96,6 +102,7 @@ public final class FoundationController {
         });
         addHomeTab();
         refreshNotes();
+        FxUtil.async(() -> { database.migrate(); return null; }, ignored -> { }, ignored -> { });
     }
 
     private void installShortcuts(Scene scene) {
@@ -142,7 +149,9 @@ public final class FoundationController {
             entry.home = controller; entry.editor = null; entry.content = view; entry.setTitle("Home"); entry.updateDot();
             controller.setNotes(items);
             controller.setOpenNote(note -> openNote(entry, note));
+            controller.setOpenVectorResult(result -> openNote(null, new Note(result.title(), result.path(), ""), result.chunkText()));
             controller.setCreateNote(() -> promptCreate(entry));
+            controller.setVectorSearch(new com.deepnote.service.VectorSearchService(database, new OllamaEmbeddingClient(config.ollamaBaseUrl(), config.embeddingModel(), Duration.ofSeconds(config.requestTimeoutSeconds()), config.embeddingDimensions()), config.similarityThreshold()));
             controller.setStateListener(() -> { if (entry == current) refreshStatus(); });
             return true;
         } catch (IOException ex) { showError("Could not open Home", ex.getMessage()); return false; }
@@ -187,15 +196,21 @@ public final class FoundationController {
     }
 
     private void openNote(TabEntry source, Note note) {
+        openNote(source, note, null);
+    }
+
+    private void openNote(TabEntry source, Note note, String passage) {
         for (TabEntry existing : entries) {
-            if (existing.editor != null && existing.editor.note().path().equals(note.path())) { select(existing); return; }
+            if (existing.editor != null && existing.editor.note().path().equals(note.path())) { select(existing); if (passage != null) existing.editor.highlightPassage(passage); return; }
         }
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/deepnote/fx/editor-view.fxml"));
             Node view = loader.load(); EditorViewController editor = loader.getController();
             TabEntry entry = source != null && entries.contains(source) ? source : new TabEntry();
             Instant modified = items.stream().filter(i -> i.note().path().equals(note.path())).map(NoteItem::modified).findFirst().orElse(null);
-            editor.configure(noteService, note, modified, config.chatModelName());
+            Note latest = noteService.readNote(note.path());
+            editor.configure(noteService, latest, modified, config.chatModelName(), indexService);
+            if (passage != null) editor.highlightPassage(passage);
             editor.setAskAction(() -> openAssistant(entry));
             editor.setDeletedAction(() -> { removeEntry(entry); refreshNotes(); });
             editor.setSavedAction(this::refreshNotes);

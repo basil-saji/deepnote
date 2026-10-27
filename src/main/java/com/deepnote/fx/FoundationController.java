@@ -8,6 +8,8 @@ import com.deepnote.model.ChatMessage;
 import com.deepnote.model.Note;
 import com.deepnote.service.NoteService;
 import com.deepnote.service.NoteIndexService;
+import com.deepnote.service.IndexingCoordinator;
+import com.deepnote.service.IndexingStatus;
 import com.deepnote.service.TextChunker;
 import com.deepnote.db.Database;
 import com.deepnote.ai.OllamaEmbeddingClient;
@@ -49,7 +51,8 @@ public final class FoundationController {
     private final AppConfig config = AppConfig.load();
     private final NoteService noteService = new NoteService(config.notesDirectory());
     private final Database database = new Database(config);
-    private final NoteIndexService indexService = new NoteIndexService(database, new OllamaEmbeddingClient(config.ollamaBaseUrl(), config.embeddingModel(), Duration.ofSeconds(config.requestTimeoutSeconds()), config.embeddingDimensions()), new TextChunker(1200));
+    private final NoteIndexService indexService = new NoteIndexService(database, new OllamaEmbeddingClient(config.ollamaBaseUrl(), config.embeddingModel(), Duration.ofSeconds(config.requestTimeoutSeconds()), config.embeddingDimensions()), new TextChunker(2048, 256));
+    private final IndexingCoordinator indexingCoordinator = new IndexingCoordinator(indexService, this::onIndexStatus);
     private final AIAssistantService assistantService = new AIAssistantService(
             new ContextManager(config.maxRecentChatTurns(), config.contextCharacterBudget()),
             new OllamaChatModelClient(config.ollamaBaseUrl(), config.chatModelName(), Duration.ofSeconds(config.requestTimeoutSeconds())));
@@ -63,6 +66,8 @@ public final class FoundationController {
     private int resizeMask;
     private TabEntry current;
     private List<NoteItem> items = List.of();
+    private volatile boolean semanticReady;
+    private volatile String semanticStatus = "Connecting";
 
     /** One workspace tab: a pill in the strip plus either a Home view or a note editor. */
     private final class TabEntry {
@@ -102,7 +107,9 @@ public final class FoundationController {
         });
         addHomeTab();
         refreshNotes();
-        FxUtil.async(() -> { database.migrate(); return null; }, ignored -> { }, ignored -> { });
+        FxUtil.async(() -> { database.migrate(); List<Note> notes = noteService.listNotes(); indexingCoordinator.reconcile(notes).join(); return null; },
+                ignored -> { semanticReady = true; semanticStatus = "Ready"; updateHomeSearchServices(); refreshStatus(); },
+                ex -> { semanticReady = false; semanticStatus = "Semantic index unavailable: " + rootCause(ex).getMessage(); updateHomeSearchServices(); refreshStatus(); });
     }
 
     private void installShortcuts(Scene scene) {
@@ -151,7 +158,7 @@ public final class FoundationController {
             controller.setOpenNote(note -> openNote(entry, note));
             controller.setOpenVectorResult(result -> openNote(null, new Note(result.title(), result.path(), ""), result.chunkText()));
             controller.setCreateNote(() -> promptCreate(entry));
-            controller.setVectorSearch(new com.deepnote.service.VectorSearchService(database, new OllamaEmbeddingClient(config.ollamaBaseUrl(), config.embeddingModel(), Duration.ofSeconds(config.requestTimeoutSeconds()), config.embeddingDimensions()), config.similarityThreshold()));
+            controller.setVectorSearch(semanticReady ? vectorSearchService() : null);
             controller.setStateListener(() -> { if (entry == current) refreshStatus(); });
             return true;
         } catch (IOException ex) { showError("Could not open Home", ex.getMessage()); return false; }
@@ -209,17 +216,29 @@ public final class FoundationController {
             TabEntry entry = source != null && entries.contains(source) ? source : new TabEntry();
             Instant modified = items.stream().filter(i -> i.note().path().equals(note.path())).map(NoteItem::modified).findFirst().orElse(null);
             Note latest = noteService.readNote(note.path());
-            editor.configure(noteService, latest, modified, config.chatModelName(), indexService);
+            editor.configure(noteService, latest, modified, config.chatModelName(), indexingCoordinator);
             if (passage != null) editor.highlightPassage(passage);
             editor.setAskAction(() -> openAssistant(entry));
-            editor.setDeletedAction(() -> { removeEntry(entry); refreshNotes(); });
+            editor.setDeletedAction(() -> { indexingCoordinator.delete(latest.path()); removeEntry(entry); refreshNotes(); });
             editor.setSavedAction(this::refreshNotes);
-            editor.setRenamedAction(title -> { entry.setTitle(title); refreshNotes(); });
+            editor.setRenamedAction(title -> { indexingCoordinator.relocate(note.path(), editor.note()); entry.setTitle(title); refreshNotes(); });
             editor.setStateListener(() -> { entry.updateDot(); if (entry == current) refreshStatus(); });
             entry.home = null; entry.editor = editor; entry.content = view; entry.setTitle(note.title()); entry.updateDot();
             if (entries.contains(entry)) select(entry); else addEntry(entry);
         } catch (IOException ex) { showError("Could not open note", ex.getMessage()); }
     }
+
+    private com.deepnote.service.VectorSearchService vectorSearchService() {
+        return new com.deepnote.service.VectorSearchService(database, new OllamaEmbeddingClient(config.ollamaBaseUrl(), config.embeddingModel(), Duration.ofSeconds(config.requestTimeoutSeconds()), config.embeddingDimensions()), config.similarityThreshold());
+    }
+
+    private void updateHomeSearchServices() { entries.stream().filter(e -> e.home != null).forEach(e -> e.home.setVectorSearch(semanticReady ? vectorSearchService() : null)); }
+
+    private void onIndexStatus(IndexingStatus update) {
+        Platform.runLater(() -> { semanticStatus = update.error() == null ? update.message() : update.message() + ": " + rootCause(update.error()).getMessage(); refreshStatus(); });
+    }
+
+    private static Throwable rootCause(Throwable error) { Throwable current = error; while (current.getCause() != null && (current instanceof java.util.concurrent.CompletionException || current instanceof java.util.concurrent.ExecutionException)) current = current.getCause(); return current; }
 
     // ---------------------------------------------------------------- AI panel
 
@@ -241,7 +260,7 @@ public final class FoundationController {
     private void refreshStatus() {
         if (current == null) return;
         String[] text = current.home != null ? current.home.status() : current.editor.status();
-        statusLeft.setText(text[0]); statusRight.setText(text[1]);
+        statusLeft.setText(text[0] + "  ·  " + semanticStatus); statusRight.setText(text[1]);
     }
 
     private static void setDot(Circle dot, String styleClass) {

@@ -5,6 +5,7 @@ import com.deepnote.service.LocalSearchService;
 import com.deepnote.service.VectorSearchService;
 import com.deepnote.model.VectorSearchResult;
 import javafx.application.Platform;
+import javafx.animation.PauseTransition;
 import javafx.fxml.FXML;
 import javafx.geometry.Bounds;
 import javafx.geometry.Pos;
@@ -14,16 +15,17 @@ import javafx.scene.control.*;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.*;
 import javafx.scene.text.TextFlow;
+import javafx.util.Duration;
 
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalTime;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.function.Consumer;
 
 /** Home tab: greeting + responsive note grid (browse state) and a dedicated keyboard-driven search view. */
 public final class HomeViewController {
+    public enum SearchMode { VECTOR, KEYWORD }
     private static final double GAP = 16;
 
     @FXML private VBox root, body, collections;
@@ -42,11 +44,12 @@ public final class HomeViewController {
     private List<NoteItem> items = List.of();
     private Map<Path, NoteItem> byPath = Map.of();
     private List<NoteItem> results = List.of();
-    private boolean recentOnly;
-    private boolean vectorMode;
+    private SearchMode searchMode = SearchMode.VECTOR;
     private VectorSearchService vectorSearchService;
     private List<VectorSearchResult> vectorResults = List.of();
     private int selected;
+    private long searchGeneration;
+    private final PauseTransition vectorDebounce = new PauseTransition(Duration.millis(180));
     private double searchMillis;
     private Consumer<Note> openNote = note -> { };
     private Consumer<VectorSearchResult> openVectorResult = result -> openNote.accept(new Note(result.title(), result.path(), ""));
@@ -67,7 +70,7 @@ public final class HomeViewController {
 
         newNoteButton.setOnAction(e -> createNote.run());
         clearButton.setOnAction(e -> clearSearch());
-        searchField.textProperty().addListener((o, old, value) -> { selected = 0; render(); });
+        searchField.textProperty().addListener((o, old, value) -> { selected = 0; searchGeneration++; render(); });
         searchField.focusedProperty().addListener((o, old, focused) -> FxUtil.toggleClass(searchBar, "focused", focused));
         scroll.viewportBoundsProperty().addListener((o, old, bounds) -> applyLayout());
         root.addEventFilter(KeyEvent.KEY_PRESSED, this::onKey);
@@ -84,7 +87,8 @@ public final class HomeViewController {
     public void setOpenNote(Consumer<Note> callback) { openNote = callback; }
     public void setOpenVectorResult(Consumer<VectorSearchResult> callback) { openVectorResult = callback; }
     public void setCreateNote(Runnable callback) { createNote = callback; }
-    public void setVectorSearch(VectorSearchService service) { vectorSearchService = service; }
+    public void setVectorSearch(VectorSearchService service) { vectorSearchService = service; searchGeneration++; if (isSearching()) render(); }
+    public SearchMode searchMode() { return searchMode; }
     public void setStateListener(Runnable callback) { stateListener = callback; }
     public void focusSearch() { Platform.runLater(() -> { searchField.requestFocus(); searchField.selectAll(); }); }
 
@@ -172,15 +176,13 @@ public final class HomeViewController {
 
     private void renderSearch() {
         String query = searchField.getText().trim();
-        if (vectorMode && vectorSearchService != null) { searchVector(query); return; }
+        if (searchMode == SearchMode.VECTOR) { searchVector(query); return; }
         List<Note> all = items.stream().map(NoteItem::note).toList();
         long started = System.nanoTime();
         List<Note> matched = searchService.search(all, query);
         searchMillis = (System.nanoTime() - started) / 1_000_000.0;
 
-        Instant cutoff = Instant.now().minus(7, ChronoUnit.DAYS);
-        results = matched.stream().map(note -> byPath.get(note.path())).filter(Objects::nonNull)
-                .filter(item -> !recentOnly || item.modified().isAfter(cutoff)).toList();
+        results = matched.stream().map(note -> byPath.get(note.path())).filter(Objects::nonNull).toList();
         if (selected >= results.size()) selected = Math.max(0, results.size() - 1);
 
         collections.getChildren().add(searchHeader());
@@ -193,29 +195,41 @@ public final class HomeViewController {
 
     private Node searchHeader() {
         Label heading = new Label("Search results:"); heading.getStyleClass().add("search-heading");
-        Label count = new Label(results.size() + (results.size() == 1 ? " match" : " matches")); count.getStyleClass().add("count-badge");
+        int countValue = searchMode == SearchMode.VECTOR ? vectorResults.size() : results.size();
+        Label count = new Label(countValue + (countValue == 1 ? " match" : " matches")); count.getStyleClass().add("count-badge");
         Label filterLabel = new Label("FILTER:"); filterLabel.getStyleClass().add("mono-label");
         ToggleGroup group = new ToggleGroup();
-        ToggleButton all = new ToggleButton("Vector"), recent = new ToggleButton("Keyword");
-        all.setToggleGroup(group); recent.setToggleGroup(group); (recentOnly ? recent : all).setSelected(true);
+        ToggleButton vector = new ToggleButton("Vector"), keyword = new ToggleButton("Keyword");
+        vector.setToggleGroup(group); keyword.setToggleGroup(group); (searchMode == SearchMode.VECTOR ? vector : keyword).setSelected(true);
         keepOneSelected(group);
-        all.setOnAction(e -> { vectorMode = true; recentOnly = false; selected = 0; render(); });
-        recent.setOnAction(e -> { vectorMode = false; recentOnly = false; selected = 0; render(); });
-        HBox pills = new HBox(all, recent); pills.getStyleClass().add("segmented"); pills.setAlignment(Pos.CENTER);
+        vector.setOnAction(e -> { searchMode = SearchMode.VECTOR; selected = 0; searchGeneration++; render(); });
+        keyword.setOnAction(e -> { searchMode = SearchMode.KEYWORD; selected = 0; searchGeneration++; render(); });
+        HBox pills = new HBox(vector, keyword); pills.getStyleClass().add("segmented"); pills.setAlignment(Pos.CENTER);
         HBox row = new HBox(10, heading, count, spacer(), filterLabel, pills); row.setAlignment(Pos.CENTER_LEFT);
         return row;
     }
 
     private void searchVector(String query) {
+        vectorResults = List.of();
         collections.getChildren().add(searchHeader());
+        if (vectorSearchService == null) { collections.getChildren().add(empty("Vector search is unavailable until PostgreSQL indexing is ready. Choose Keyword or fix the database connection.")); return; }
         collections.getChildren().add(empty("Searching local embeddings…"));
+        long generation = searchGeneration;
+        vectorDebounce.stop();
+        vectorDebounce.setOnFinished(e -> executeVectorSearch(query, generation));
+        vectorDebounce.play();
+    }
+
+    private void executeVectorSearch(String query, long generation) {
+        if (generation != searchGeneration || searchMode != SearchMode.VECTOR) return;
         FxUtil.async(() -> vectorSearchService.search(query, 20), value -> {
+            if (generation != searchGeneration || searchMode != SearchMode.VECTOR || !query.equals(searchField.getText().trim())) return;
             vectorResults = value; searchMillis = 0; collections.getChildren().clear(); collections.getChildren().add(searchHeader());
             if (value.isEmpty()) { collections.getChildren().add(empty("No indexed notes match that query.")); return; }
             VBox list = new VBox(14); resultCards.clear();
             for (VectorSearchResult result : value) { Region card = vectorCard(result); resultCards.add(card); list.getChildren().add(card); }
             collections.getChildren().add(list); applySelection();
-        }, error -> { collections.getChildren().clear(); collections.getChildren().add(searchHeader()); collections.getChildren().add(empty("Vector search unavailable: " + error.getMessage())); });
+        }, error -> { if (generation != searchGeneration || searchMode != SearchMode.VECTOR) return; collections.getChildren().clear(); collections.getChildren().add(searchHeader()); collections.getChildren().add(empty("Vector search unavailable: " + error.getMessage())); });
     }
 
     private Region vectorCard(VectorSearchResult result) {
@@ -269,15 +283,16 @@ public final class HomeViewController {
             case UP -> { move(-1); event.consume(); }
             case ESCAPE -> { clearSearch(); event.consume(); }
             case ENTER -> {
-                if (event.getTarget() == searchField && !results.isEmpty()) { openNote.accept(results.get(selected).note()); event.consume(); }
+                if (event.getTarget() == searchField) { openSelected(); event.consume(); }
             }
             default -> { }
         }
     }
 
     private void move(int delta) {
-        if (results.isEmpty()) return;
-        selected = Math.max(0, Math.min(results.size() - 1, selected + delta));
+        int size = searchMode == SearchMode.VECTOR ? vectorResults.size() : results.size();
+        if (size == 0) return;
+        selected = Math.max(0, Math.min(size - 1, selected + delta));
         applySelection();
         ensureVisible(resultCards.get(selected));
     }
@@ -296,7 +311,12 @@ public final class HomeViewController {
         else if (target.getMaxY() > top + view) scroll.setVvalue(Math.min(1, (target.getMaxY() + 8 - view) / range));
     }
 
-    private void clearSearch() { recentOnly = false; searchField.clear(); searchField.requestFocus(); }
+    private void openSelected() {
+        if (searchMode == SearchMode.VECTOR && selected < vectorResults.size()) openVectorResult.accept(vectorResults.get(selected));
+        else if (searchMode == SearchMode.KEYWORD && selected < results.size()) openNote.accept(results.get(selected).note());
+    }
+
+    private void clearSearch() { searchField.clear(); searchField.requestFocus(); }
 
     // ---------------------------------------------------------------- small builders
 

@@ -23,10 +23,23 @@ public final class OllamaEmbeddingClient {
             }
             throw new IllegalStateException("Ollama embedding failed (HTTP "+response.statusCode()+"): "+detail);
         }
-        String array=body.contains("embeddings") ? body.substring(body.indexOf("[[")+1, body.indexOf("]]")) : body.substring(body.indexOf("["), body.lastIndexOf("]")+1);
+        String array = embeddingArray(body);
         Matcher m=Pattern.compile("-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?").matcher(array); List<Float> values=new ArrayList<>(); while(m.find()) values.add(Float.parseFloat(m.group()));
         if(values.size()!=dimensions) throw new IllegalStateException("Embedding model returned "+values.size()+" dimensions; expected "+dimensions+".");
         return values;
+    }
+    private static String embeddingArray(String body) {
+        int marker = body.indexOf("\"embeddings\"");
+        if (marker < 0) marker = body.indexOf("\"embedding\"");
+        int start = marker < 0 ? body.indexOf('[') : body.indexOf('[', marker);
+        if (start < 0) throw new IllegalStateException("Ollama embedding response did not contain an embedding array.");
+        int depth = 0;
+        for (int i = start; i < body.length(); i++) {
+            char ch = body.charAt(i);
+            if (ch == '[') depth++;
+            else if (ch == ']' && --depth == 0) return body.substring(start, i + 1);
+        }
+        throw new IllegalStateException("Ollama returned an unterminated embedding array.");
     }
     private static String escape(String value){return value.replace("\\","\\\\").replace("\"","\\\"").replace("\n","\\n");}
 }

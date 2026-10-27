@@ -23,6 +23,8 @@ mvn compile javafx:run
 
 Start the local database with `docker compose up -d`. The compose file uses `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_PORT`; the application uses matching `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and required `DB_PASSWORD` variables. On startup, DeepNote applies the repeatable schema migration in `db/migrations/V1__initial_schema.sql`/the JDBC migration path and never drops existing data.
 
+For desktop launches from the repository root, the application also reads the ignored local `.env` file using the same names; process environment variables take precedence. Keep `.env` local and never commit it.
+
 Install the local embedding model with `ollama pull embeddinggemma:300m`. Older Ollama releases may report that this model does not support embeddings; upgrade Ollama first, then pull the model again. The application verifies the model returns exactly 768 dimensions; it never truncates vectors. Configure the model, timeout, and similarity threshold with `-Ddeepnote.embeddingModel=...`, `-Ddeepnote.timeoutSeconds=90`, and `-Ddeepnote.similarityThreshold=0.80`.
 
 ## Ollama chat configuration

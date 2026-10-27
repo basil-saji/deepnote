@@ -2,7 +2,7 @@ package com.deepnote.fx;
 
 import com.deepnote.model.Note;
 import com.deepnote.service.NoteService;
-import com.deepnote.service.NoteIndexService;
+import com.deepnote.service.IndexingCoordinator;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.fxml.FXML;
@@ -23,7 +23,7 @@ public final class EditorViewController {
 
     private final BooleanProperty dirty = new SimpleBooleanProperty(false);
     private NoteService noteService;
-    private NoteIndexService indexService;
+    private IndexingCoordinator indexingCoordinator;
     private Note note;
     private Instant lastEdited = Instant.now();
     private String modelName = "";
@@ -51,8 +51,8 @@ public final class EditorViewController {
         dirty.addListener((o, old, value) -> { FxUtil.toggleClass(saveButton, "dirty", value); stateListener.run(); });
     }
 
-    public void configure(NoteService service, Note initial, Instant modified, String model, NoteIndexService indexer) {
-        noteService = service; indexService = indexer; note = initial; lastEdited = modified == null ? Instant.now() : modified; modelName = model;
+    public void configure(NoteService service, Note initial, Instant modified, String model, IndexingCoordinator indexer) {
+        noteService = service; indexingCoordinator = indexer; note = initial; lastEdited = modified == null ? Instant.now() : modified; modelName = model;
         loading = true; contentArea.setText(initial.content()); loading = false;
         dirty.set(false); titleLabel.setText(initial.title()); updateMetadata();
     }
@@ -111,7 +111,7 @@ public final class EditorViewController {
             note = saved; lastEdited = Instant.now();
             if (snapshot.equals(contentArea.getText())) dirty.set(false);
             titleLabel.setText(note.title()); updateMetadata(); savedAction.run();
-            if (indexService != null) java.util.concurrent.CompletableFuture.runAsync(() -> { try { indexService.index(saved); } catch (Exception ignored) { } });
+            if (indexingCoordinator != null) indexingCoordinator.request(saved);
             if (afterSuccess != null) afterSuccess.run();
         }, ex -> error(ex.getMessage()));
     }

@@ -10,6 +10,7 @@ public final class TextChunker {
         if (maxCharacters < 1 || overlapCharacters < 0 || overlapCharacters >= maxCharacters) throw new IllegalArgumentException("Invalid chunk limits");
         this.maxCharacters=maxCharacters; this.overlapCharacters=overlapCharacters;
     }
+    public String configuration() { return maxCharacters + ":" + overlapCharacters; }
     public List<String> split(String text) {
         if (text == null || text.isBlank()) return List.of();
         List<String> result=new ArrayList<>();

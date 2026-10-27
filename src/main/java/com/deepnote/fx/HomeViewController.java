@@ -222,9 +222,10 @@ public final class HomeViewController {
 
     private void executeVectorSearch(String query, long generation) {
         if (generation != searchGeneration || searchMode != SearchMode.VECTOR) return;
+        long started = System.nanoTime();
         FxUtil.async(() -> vectorSearchService.search(query, 20), value -> {
             if (generation != searchGeneration || searchMode != SearchMode.VECTOR || !query.equals(searchField.getText().trim())) return;
-            vectorResults = value; searchMillis = 0; collections.getChildren().clear(); collections.getChildren().add(searchHeader());
+            vectorResults = value; searchMillis = (System.nanoTime() - started) / 1_000_000.0; collections.getChildren().clear(); collections.getChildren().add(searchHeader());
             if (value.isEmpty()) { collections.getChildren().add(empty("No indexed notes match that query.")); return; }
             VBox list = new VBox(14); resultCards.clear();
             for (VectorSearchResult result : value) { Region card = vectorCard(result); resultCards.add(card); list.getChildren().add(card); }
@@ -234,7 +235,12 @@ public final class HomeViewController {
 
     private Region vectorCard(VectorSearchResult result) {
         Label title = new Label(result.title()); title.getStyleClass().add("card-title");
-        Label score = new Label(String.format(Locale.ROOT, "Relevance %.0f%%", result.score() * 100)); score.getStyleClass().add("read-badge");
+        String label = switch (result.matchKind()) {
+            case LEXICAL -> "Exact text match";
+            case BOTH -> result.hasSemanticScore() ? String.format(Locale.ROOT, "Text + relevance %.0f%%", result.score() * 100) : "Exact text match";
+            case SEMANTIC -> String.format(Locale.ROOT, "Relevance %.0f%%", result.score() * 100);
+        };
+        Label score = new Label(label); score.getStyleClass().add("read-badge");
         Label snippet = new Label(result.chunkText()); snippet.setWrapText(true); snippet.getStyleClass().add("card-preview");
         VBox card = new VBox(8, new HBox(8, title, spacer(), score), snippet); card.getStyleClass().add("result-card"); card.setCursor(Cursor.HAND);
         card.setOnMouseClicked(e -> openVectorResult.accept(result)); return card;

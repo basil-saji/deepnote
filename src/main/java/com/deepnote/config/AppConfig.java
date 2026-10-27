@@ -29,7 +29,7 @@ public record AppConfig(Path notesDirectory, String ollamaBaseUrl, String chatMo
                 setting("DB_PASSWORD", "POSTGRES_PASSWORD", "", dotEnv),
                 System.getProperty("deepnote.embeddingModel", "embeddinggemma:300m"),
                 Integer.getInteger("deepnote.embeddingDimensions", 768),
-                Double.parseDouble(System.getProperty("deepnote.similarityThreshold", "0.80")));
+                Double.parseDouble(System.getProperty("deepnote.similarityThreshold", "-1.0")));
     }
 
     private static String setting(String primary, String legacy, String fallback, Map<String, String> dotEnv) {

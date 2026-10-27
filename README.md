@@ -25,7 +25,7 @@ Start the local database with `docker compose up -d`. The compose file uses `POS
 
 For desktop launches from the repository root, the application also reads the ignored local `.env` file using the same names; process environment variables take precedence. Keep `.env` local and never commit it.
 
-Install the local embedding model with `ollama pull embeddinggemma:300m`. Older Ollama releases may report that this model does not support embeddings; upgrade Ollama first, then pull the model again. The application verifies the model returns exactly 768 dimensions; it never truncates vectors. Configure the model, timeout, and similarity threshold with `-Ddeepnote.embeddingModel=...`, `-Ddeepnote.timeoutSeconds=90`, and `-Ddeepnote.similarityThreshold=0.80`.
+Install the local embedding model with `ollama pull embeddinggemma:300m`. Older Ollama releases may report that this model does not support embeddings; upgrade Ollama first, then pull the model again. DeepNote uses EmbeddingGemma's retrieval prompts (`task: search result | query: ...` and `title: ... | text: ...`) and verifies exactly 768 dimensions. The default similarity threshold is disabled (`-1.0`): retrieval takes nearest chunks first; set `-Ddeepnote.similarityThreshold=...` only after measuring the local corpus.
 
 ## Ollama chat configuration
 

@@ -107,8 +107,8 @@ public final class FoundationController {
         });
         addHomeTab();
         refreshNotes();
-        FxUtil.async(() -> { database.migrate(); List<Note> notes = noteService.listNotes(); indexingCoordinator.reconcile(notes).join(); return null; },
-                ignored -> { semanticReady = true; semanticStatus = "Ready"; updateHomeSearchServices(); refreshStatus(); },
+        FxUtil.async(() -> { database.migrate(); List<Note> notes = noteService.listNotes(); return indexingCoordinator.reconcile(notes).join(); },
+                result -> { semanticReady = true; semanticStatus = result.complete() ? "Ready" : "Ready with " + result.failed().size() + " indexing failure(s)"; updateHomeSearchServices(); refreshStatus(); },
                 ex -> { semanticReady = false; semanticStatus = "Semantic index unavailable: " + rootCause(ex).getMessage(); updateHomeSearchServices(); refreshStatus(); });
     }
 
@@ -229,7 +229,7 @@ public final class FoundationController {
     }
 
     private com.deepnote.service.VectorSearchService vectorSearchService() {
-        return new com.deepnote.service.VectorSearchService(database, new OllamaEmbeddingClient(config.ollamaBaseUrl(), config.embeddingModel(), Duration.ofSeconds(config.requestTimeoutSeconds()), config.embeddingDimensions()), config.similarityThreshold());
+        return new com.deepnote.service.VectorSearchService(database, new OllamaEmbeddingClient(config.ollamaBaseUrl(), config.embeddingModel(), Duration.ofSeconds(config.requestTimeoutSeconds()), config.embeddingDimensions()), config.similarityThreshold(), config.notesDirectory());
     }
 
     private void updateHomeSearchServices() { entries.stream().filter(e -> e.home != null).forEach(e -> e.home.setVectorSearch(semanticReady ? vectorSearchService() : null)); }
@@ -312,6 +312,7 @@ public final class FoundationController {
                 return;
             }
         }
+        indexingCoordinator.close();
         Platform.exit();
     }
 

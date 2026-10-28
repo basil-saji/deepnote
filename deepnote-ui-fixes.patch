@@ -1,0 +1,798 @@
+diff --git a/src/main/java/com/deepnote/fx/AssistantPanelController.java b/src/main/java/com/deepnote/fx/AssistantPanelController.java
+index cdcf14f..687f762 100644
+--- a/src/main/java/com/deepnote/fx/AssistantPanelController.java
++++ b/src/main/java/com/deepnote/fx/AssistantPanelController.java
+@@ -116,8 +116,8 @@ public final class AssistantPanelController {
+ 
+     private Node userBubble(String text, LocalTime time) {
+         Label meta = new Label(time == null ? "You" : "You • " + time.format(CLOCK)); meta.getStyleClass().add("chat-meta");
+-        Label bubble = new Label(text); bubble.getStyleClass().add("user-bubble"); bubble.setWrapText(true); bubble.setMaxWidth(290);
+-        VBox box = new VBox(4, meta, bubble); box.setAlignment(Pos.CENTER_RIGHT);
++        Label bubble = new Label(text); bubble.getStyleClass().add("user-bubble"); bubble.setWrapText(true); bubble.setMaxWidth(260);
++        VBox box = new VBox(4, meta, bubble); box.setAlignment(Pos.CENTER_RIGHT); box.setFillWidth(false);
+         return box;
+     }
+ 
+@@ -127,7 +127,7 @@ public final class AssistantPanelController {
+         HBox meta = new HBox(8, who, gap); meta.setAlignment(Pos.CENTER_LEFT);
+         if (millis >= 0) { Label took = new Label("Thought in " + millis + "ms"); took.getStyleClass().add("chat-meta"); meta.getChildren().add(took); }
+ 
+-        Label body = new Label(text); body.getStyleClass().add("ai-text"); body.setWrapText(true); body.setMaxWidth(Double.MAX_VALUE);
++        VBox body = MarkdownView.render(text);
+         Button insert = new Button("+ Insert to note"); insert.getStyleClass().add("copy-button");
+         insert.setOnAction(e -> { insertHandler.accept(text); flash(insert, "✓ Inserted", "+ Insert to note"); });
+         Button copy = new Button("⧉ Copy"); copy.getStyleClass().add("copy-button");
+diff --git a/src/main/java/com/deepnote/fx/DeepNoteFxApplication.java b/src/main/java/com/deepnote/fx/DeepNoteFxApplication.java
+index ff8d4b6..5654773 100644
+--- a/src/main/java/com/deepnote/fx/DeepNoteFxApplication.java
++++ b/src/main/java/com/deepnote/fx/DeepNoteFxApplication.java
+@@ -3,20 +3,30 @@ package com.deepnote.fx;
+ import atlantafx.base.theme.PrimerDark;
+ import javafx.application.Application;
+ import javafx.fxml.FXMLLoader;
++import javafx.geometry.Rectangle2D;
+ import javafx.scene.Parent;
+ import javafx.scene.Scene;
++import javafx.stage.Screen;
+ import javafx.stage.Stage;
++import javafx.stage.StageStyle;
+ import java.io.IOException;
+ 
+-/** JavaFX entry point for the migrated DeepNote workspace. */
++/** JavaFX entry point: an undecorated window whose custom top bar acts as the title bar. */
+ public final class DeepNoteFxApplication extends Application {
+     @Override public void start(Stage stage) throws IOException {
+         Application.setUserAgentStylesheet(new PrimerDark().getUserAgentStylesheet());
+         Parent root = FXMLLoader.load(DeepNoteFxApplication.class.getResource("/com/deepnote/fx/foundation.fxml"));
+-        Scene scene = new Scene(root, 1200, 780);
++        Rectangle2D screen = Screen.getPrimary().getVisualBounds(); // excludes the taskbar
++        double width = Math.min(1200, screen.getWidth()), height = Math.min(780, screen.getHeight());
++        Scene scene = new Scene(root, width, height);
+         scene.getStylesheets().add(DeepNoteFxApplication.class.getResource("/com/deepnote/fx/foundation.css").toExternalForm());
++        stage.initStyle(StageStyle.UNDECORATED);
+         stage.setTitle("DeepNote — Workspace");
+-        stage.setMinWidth(860); stage.setMinHeight(560); stage.setScene(scene); stage.show();
++        stage.setMinWidth(Math.min(860, screen.getWidth())); stage.setMinHeight(Math.min(560, screen.getHeight()));
++        stage.setScene(scene);
++        stage.setX(screen.getMinX() + (screen.getWidth() - width) / 2);
++        stage.setY(screen.getMinY() + (screen.getHeight() - height) / 2);
++        stage.show();
+     }
+     public static void main(String[] args) { launch(args); }
+ }
+diff --git a/src/main/java/com/deepnote/fx/Dialogs.java b/src/main/java/com/deepnote/fx/Dialogs.java
+new file mode 100644
+index 0000000..1888a10
+--- /dev/null
++++ b/src/main/java/com/deepnote/fx/Dialogs.java
+@@ -0,0 +1,105 @@
++package com.deepnote.fx;
++
++import javafx.application.Platform;
++import javafx.geometry.Insets;
++import javafx.geometry.Pos;
++import javafx.geometry.Rectangle2D;
++import javafx.scene.Scene;
++import javafx.scene.control.Button;
++import javafx.scene.control.Label;
++import javafx.scene.control.TextField;
++import javafx.scene.layout.HBox;
++import javafx.scene.layout.Region;
++import javafx.scene.layout.StackPane;
++import javafx.scene.layout.VBox;
++import javafx.scene.paint.Color;
++import javafx.stage.Modality;
++import javafx.stage.Screen;
++import javafx.stage.Stage;
++import javafx.stage.StageStyle;
++import javafx.stage.Window;
++
++import java.util.function.Consumer;
++
++/** Modern dark modal dialogs: a rounded card centred over the app on a dimmed, transparent overlay stage. */
++final class Dialogs {
++    private Dialogs() { }
++
++    /** Text prompt (New Note / Rename). The action receives the trimmed, non-blank text. */
++    static void prompt(Window owner, String title, String subtitle, String initial, String confirmText, Consumer<String> onConfirm) {
++        TextField input = new TextField(initial); input.getStyleClass().add("dialog-input");
++        Stage stage = stage(owner);
++        Button cancel = button("Cancel", "dialog-secondary", stage::close); cancel.setCancelButton(true);
++        Button confirm = button(confirmText, "dialog-primary", () -> {
++            String value = input.getText().trim();
++            if (!value.isEmpty()) { stage.close(); onConfirm.accept(value); }
++        });
++        confirm.setDefaultButton(true);
++        confirm.disableProperty().bind(input.textProperty().isEmpty());
++        show(stage, owner, card(title, subtitle, input, cancel, confirm));
++        Platform.runLater(() -> { input.requestFocus(); input.selectAll(); });
++    }
++
++    /** Yes/no confirmation; {@code destructive} paints the action red. */
++    static void confirm(Window owner, String title, String subtitle, String confirmText, boolean destructive, Runnable onConfirm) {
++        Stage stage = stage(owner);
++        Button cancel = button("Cancel", "dialog-secondary", stage::close); cancel.setCancelButton(true);
++        Button confirm = button(confirmText, destructive ? "dialog-danger" : "dialog-primary", () -> { stage.close(); onConfirm.run(); });
++        confirm.setDefaultButton(true);
++        show(stage, owner, card(title, subtitle, null, cancel, confirm));
++    }
++
++    /** Unsaved-changes prompt: Cancel (nothing happens), Discard, Save. */
++    static void unsaved(Window owner, String title, String subtitle, Runnable onSave, Runnable onDiscard) {
++        Stage stage = stage(owner);
++        Button cancel = button("Cancel", "dialog-secondary", stage::close); cancel.setCancelButton(true);
++        Button discard = button("Discard", "dialog-danger", () -> { stage.close(); onDiscard.run(); });
++        Button save = button("Save", "dialog-primary", () -> { stage.close(); onSave.run(); });
++        save.setDefaultButton(true);
++        show(stage, owner, card(title, subtitle, null, cancel, discard, save));
++    }
++
++    /** Simple notice with a single OK button (errors). */
++    static void message(Window owner, String title, String text) {
++        Stage stage = stage(owner);
++        Button ok = button("OK", "dialog-primary", stage::close); ok.setDefaultButton(true); ok.setCancelButton(true);
++        show(stage, owner, card(title, text, null, ok));
++    }
++
++    // ------------------------------------------------------------------ internals
++
++    private static Stage stage(Window owner) {
++        Stage stage = new Stage(StageStyle.TRANSPARENT);
++        if (owner != null) stage.initOwner(owner);
++        stage.initModality(owner != null ? Modality.WINDOW_MODAL : Modality.APPLICATION_MODAL);
++        return stage;
++    }
++
++    private static Button button(String text, String styleClass, Runnable action) {
++        Button button = new Button(text); button.getStyleClass().addAll("dialog-button", styleClass);
++        button.setOnAction(e -> action.run());
++        return button;
++    }
++
++    private static VBox card(String title, String subtitle, TextField input, Button... buttons) {
++        Label heading = new Label(title); heading.getStyleClass().add("dialog-title");
++        Label body = new Label(subtitle); body.getStyleClass().add("dialog-subtitle"); body.setWrapText(true);
++        HBox actions = new HBox(10); actions.setAlignment(Pos.CENTER_RIGHT); actions.getChildren().addAll(buttons);
++        VBox card = new VBox(8, heading, body);
++        if (input != null) { VBox.setMargin(input, new Insets(8, 0, 0, 0)); card.getChildren().add(input); }
++        Region gap = new Region(); gap.setMinHeight(10); card.getChildren().addAll(gap, actions);
++        card.getStyleClass().add("dialog-card");
++        card.setPrefWidth(400); card.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
++        return card;
++    }
++
++    private static void show(Stage stage, Window owner, VBox card) {
++        StackPane backdrop = new StackPane(card); backdrop.getStyleClass().add("dialog-backdrop"); backdrop.setAlignment(Pos.CENTER);
++        Scene scene = new Scene(backdrop); scene.setFill(Color.TRANSPARENT);
++        if (owner != null && owner.getScene() != null) scene.getStylesheets().setAll(owner.getScene().getStylesheets());
++        stage.setScene(scene);
++        if (owner != null) { stage.setX(owner.getX()); stage.setY(owner.getY()); stage.setWidth(owner.getWidth()); stage.setHeight(owner.getHeight()); }
++        else { Rectangle2D v = Screen.getPrimary().getVisualBounds(); stage.setX(v.getMinX()); stage.setY(v.getMinY()); stage.setWidth(v.getWidth()); stage.setHeight(v.getHeight()); }
++        stage.show();
++    }
++}
+diff --git a/src/main/java/com/deepnote/fx/EditorViewController.java b/src/main/java/com/deepnote/fx/EditorViewController.java
+index 1449ec7..6d336fa 100644
+--- a/src/main/java/com/deepnote/fx/EditorViewController.java
++++ b/src/main/java/com/deepnote/fx/EditorViewController.java
+@@ -11,7 +11,6 @@ import javafx.scene.layout.BorderPane;
+ import javafx.scene.layout.StackPane;
+ 
+ import java.time.Instant;
+-import java.util.Optional;
+ import java.util.function.Consumer;
+ 
+ /** Plain-text note editor: centred reading column, icon toolbar and borderless text area. */
+@@ -110,16 +109,11 @@ public final class EditorViewController {
+     /** Runs {@code proceed} once it is safe to close: immediately if clean, after Save/Discard if dirty, never on Cancel. */
+     public void requestClose(Runnable proceed) {
+         if (!dirty.get()) { proceed.run(); return; }
+-        Alert dialog = new Alert(Alert.AlertType.CONFIRMATION, "Save changes to “" + note.title() + "” before closing?", ButtonType.CANCEL, ButtonType.NO, ButtonType.YES);
+-        Optional<ButtonType> answer = dialog.showAndWait();
+-        if (answer.isEmpty() || answer.get() == ButtonType.CANCEL) return;
+-        if (answer.get() == ButtonType.YES) save(proceed); else proceed.run();
++        Dialogs.unsaved(owner(), "Unsaved changes", "Save changes to “" + note.title() + "” before leaving?", () -> save(proceed), proceed);
+     }
+ 
+     private void rename() {
+-        TextInputDialog dialog = new TextInputDialog(note.title());
+-        dialog.setTitle("Rename note"); dialog.setHeaderText("Choose a new note title");
+-        dialog.showAndWait().ifPresent(value -> {
++        Dialogs.prompt(owner(), "Rename note", "Choose a new title for this note.", note.title(), "Rename", value -> {
+             Note target = note;
+             FxUtil.async(() -> noteService.renameNote(target, value), renamed -> {
+                 note = renamed; titleLabel.setText(note.title()); renamedAction.accept(note.title());
+@@ -128,13 +122,14 @@ public final class EditorViewController {
+     }
+ 
+     private void delete() {
+-        Alert dialog = new Alert(Alert.AlertType.CONFIRMATION, "Delete “" + note.title() + "”?", ButtonType.CANCEL, ButtonType.OK);
+-        dialog.showAndWait().filter(ButtonType.OK::equals).ifPresent(ok -> {
++        Dialogs.confirm(owner(), "Delete note", "“" + note.title() + "” will be permanently deleted. This can’t be undone.", "Delete", true, () -> {
+             Note target = note;
+             FxUtil.async(() -> { noteService.deleteNote(target); return Boolean.TRUE; }, done -> deletedAction.run(), ex -> error(ex.getMessage()));
+         });
+     }
+ 
++    private javafx.stage.Window owner() { return root.getScene() == null ? null : root.getScene().getWindow(); }
++
+     private void setIcon(Button button, String path, String tooltip) {
+         StackPane graphic = new StackPane(FxUtil.icon(path)); graphic.setMinSize(16, 16);
+         button.setGraphic(graphic); button.setTooltip(new Tooltip(tooltip));
+@@ -147,5 +142,5 @@ public final class EditorViewController {
+                 + " min read • Last edited " + FxUtil.relativeTime(lastEdited));
+     }
+ 
+-    private void error(String message) { new Alert(Alert.AlertType.ERROR, message == null ? "Operation failed." : message, ButtonType.OK).showAndWait(); }
++    private void error(String message) { Dialogs.message(owner(), "Something went wrong", message == null ? "Operation failed." : message); }
+ }
+diff --git a/src/main/java/com/deepnote/fx/FoundationController.java b/src/main/java/com/deepnote/fx/FoundationController.java
+index 8a6873b..2dc66f6 100644
+--- a/src/main/java/com/deepnote/fx/FoundationController.java
++++ b/src/main/java/com/deepnote/fx/FoundationController.java
+@@ -7,19 +7,26 @@ import com.deepnote.config.AppConfig;
+ import com.deepnote.model.ChatMessage;
+ import com.deepnote.model.Note;
+ import com.deepnote.service.NoteService;
++import javafx.application.Platform;
+ import javafx.fxml.FXML;
+ import javafx.fxml.FXMLLoader;
+ import javafx.scene.Node;
+ import javafx.scene.Scene;
+ import javafx.scene.control.*;
++import javafx.geometry.Rectangle2D;
++import javafx.scene.Cursor;
++import javafx.scene.control.ButtonBase;
+ import javafx.scene.input.KeyCode;
+ import javafx.scene.input.KeyCodeCombination;
+ import javafx.scene.input.KeyCombination;
++import javafx.scene.input.MouseEvent;
+ import javafx.scene.layout.BorderPane;
+ import javafx.scene.layout.HBox;
+ import javafx.scene.layout.Priority;
+ import javafx.scene.layout.StackPane;
+ import javafx.scene.shape.Circle;
++import javafx.stage.Screen;
++import javafx.stage.Stage;
+ 
+ import java.io.IOException;
+ import java.nio.file.Path;
+@@ -30,9 +37,9 @@ import java.util.*;
+ /** Workspace shell: single-row tab strip, active view host and live bottom status bar. */
+ public final class FoundationController {
+     @FXML private BorderPane root;
+-    @FXML private HBox tabStrip;
+-    @FXML private Button newHomeButton;
+-    @FXML private Label statusPill, statusLeft, statusRight;
++    @FXML private HBox topBar, tabStrip;
++    @FXML private Button newHomeButton, backButton, minButton, maxButton, closeButton;
++    @FXML private Label statusLeft, statusRight;
+     @FXML private StackPane workspace;
+ 
+     private final AppConfig config = AppConfig.load();
+@@ -42,7 +49,12 @@ public final class FoundationController {
+             new OllamaChatModelClient(config.ollamaBaseUrl(), config.chatModelName(), Duration.ofSeconds(config.requestTimeoutSeconds())));
+     private final Map<Path, List<ChatMessage>> conversations = new HashMap<>();
+     private final List<TabEntry> entries = new ArrayList<>();
+-    private final Circle pillDot = new Circle(4);
++    private static final double EDGE = 6;
++    private Stage stage;
++    private boolean maximized, dragging;
++    private double dragOffsetX, dragOffsetY, startX, startY, startW, startH, startScreenX, startScreenY;
++    private double[] restoreBounds;
++    private int resizeMask;
+     private TabEntry current;
+     private List<NoteItem> items = List.of();
+ 
+@@ -75,8 +87,13 @@ public final class FoundationController {
+     @FXML private void initialize() {
+         newHomeButton.setTooltip(new Tooltip("Open a new Home tab"));
+         newHomeButton.setOnAction(e -> addHomeTab());
+-        statusPill.setGraphic(pillDot);
+-        root.sceneProperty().addListener((o, old, scene) -> { if (scene != null) installShortcuts(scene); });
++        setupWindowChrome();
++        root.sceneProperty().addListener((o, old, scene) -> {
++            if (scene == null) return;
++            installShortcuts(scene);
++            scene.windowProperty().addListener((w, a, window) -> { if (window instanceof Stage s) attachStage(s, scene); });
++            if (scene.getWindow() instanceof Stage s) attachStage(s, scene);
++        });
+         addHomeTab();
+         refreshNotes();
+     }
+@@ -105,26 +122,39 @@ public final class FoundationController {
+     }
+ 
+     private void promptCreate(TabEntry source) {
+-        TextInputDialog dialog = new TextInputDialog("Untitled note");
+-        dialog.setTitle("New note"); dialog.setHeaderText("Create a TXT note");
+-        dialog.showAndWait().ifPresent(title -> FxUtil.async(() -> noteService.createNote(title), note -> {
+-            refreshNotes(); openNote(source, note);
+-        }, ex -> showError("Could not create note", ex.getMessage())));
++        Dialogs.prompt(window(), "New note", "Give your TXT note a title.", "Untitled note", "Create",
++                title -> FxUtil.async(() -> noteService.createNote(title), note -> { refreshNotes(); openNote(source, note); },
++                        ex -> showError("Could not create note", ex.getMessage())));
+     }
+ 
+     // ---------------------------------------------------------------- tabs
+ 
+     private void addHomeTab() {
++        TabEntry entry = new TabEntry();
++        if (bindHome(entry)) addEntry(entry);
++    }
++
++    /** Turns {@code entry} into a Home tab (new tab, or an editor tab going Back). */
++    private boolean bindHome(TabEntry entry) {
+         try {
+             FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/deepnote/fx/home-view.fxml"));
+             Node view = loader.load(); HomeViewController controller = loader.getController();
+-            TabEntry entry = new TabEntry(); entry.home = controller; entry.content = view; entry.setTitle("Home");
++            entry.home = controller; entry.editor = null; entry.content = view; entry.setTitle("Home"); entry.updateDot();
+             controller.setNotes(items);
+             controller.setOpenNote(note -> openNote(entry, note));
+             controller.setCreateNote(() -> promptCreate(entry));
+             controller.setStateListener(() -> { if (entry == current) refreshStatus(); });
+-            addEntry(entry);
+-        } catch (IOException ex) { showError("Could not open Home", ex.getMessage()); }
++            return true;
++        } catch (IOException ex) { showError("Could not open Home", ex.getMessage()); return false; }
++    }
++
++    /** Back button: leaves the note (asking Save/Discard/Cancel if dirty) and returns this tab to Home. */
++    private void goBack() {
++        TabEntry entry = current;
++        if (entry == null || entry.editor == null) return;
++        entry.editor.requestClose(() -> {
++            if (bindHome(entry)) { select(entry); refreshNotes(); }
++        });
+     }
+ 
+     private void addEntry(TabEntry entry) {
+@@ -137,6 +167,7 @@ public final class FoundationController {
+         current = entry;
+         workspace.getChildren().setAll(entry.content);
+         entries.forEach(TabEntry::updateActive);
++        FxUtil.show(backButton, entry.editor != null);
+         refreshStatus();
+         if (entry.home != null) entry.home.focusSearch();
+         if (entry.editor != null) entry.editor.focusEditor();
+@@ -194,15 +225,7 @@ public final class FoundationController {
+ 
+     private void refreshStatus() {
+         if (current == null) return;
+-        String[] text;
+-        if (current.home != null) {
+-            text = current.home.status();
+-            statusPill.setText("Local Workspace"); setDot(pillDot, "dot-blue");
+-        } else {
+-            text = current.editor.status();
+-            boolean dirty = current.editor.isDirty();
+-            statusPill.setText(dirty ? "Unsaved changes" : "Saved"); setDot(pillDot, dirty ? "dot-amber" : "dot-green");
+-        }
++        String[] text = current.home != null ? current.home.status() : current.editor.status();
+         statusLeft.setText(text[0]); statusRight.setText(text[1]);
+     }
+ 
+@@ -211,8 +234,137 @@ public final class FoundationController {
+         dot.getStyleClass().add(styleClass);
+     }
+ 
+-    private void showError(String title, String message) {
+-        Alert alert = new Alert(Alert.AlertType.ERROR, message == null ? title : message, ButtonType.OK);
+-        alert.setTitle(title); alert.showAndWait();
++    private void showError(String title, String message) { Dialogs.message(window(), title, message == null ? title : message); }
++
++    private javafx.stage.Window window() { return root.getScene() == null ? null : root.getScene().getWindow(); }
++
++    // ---------------------------------------------------------------- window chrome (undecorated stage)
++
++    private void setupWindowChrome() {
++        backButton.setGraphic(iconBox(FxUtil.BACK)); backButton.setTooltip(new Tooltip("Back to Home"));
++        backButton.setOnAction(e -> goBack()); FxUtil.show(backButton, false);
++        minButton.setGraphic(iconBox(FxUtil.MINIMIZE)); minButton.setTooltip(new Tooltip("Minimize"));
++        maxButton.setGraphic(iconBox(FxUtil.MAXIMIZE)); maxButton.setTooltip(new Tooltip("Maximize"));
++        closeButton.setGraphic(iconBox(FxUtil.CLOSE)); closeButton.setTooltip(new Tooltip("Close"));
++        minButton.setOnAction(e -> { if (stage != null) stage.setIconified(true); });
++        maxButton.setOnAction(e -> toggleMaximize());
++        closeButton.setOnAction(e -> closeWindow());
++        topBar.setOnMousePressed(this::barPressed);
++        topBar.setOnMouseDragged(this::barDragged);
++        topBar.setOnMouseReleased(e -> dragging = false);
++    }
++
++    private static Node iconBox(String path) { StackPane box = new StackPane(FxUtil.icon(path)); box.setMinSize(16, 16); return box; }
++
++    private void attachStage(Stage target, Scene scene) {
++        if (stage == target) return;
++        stage = target;
++        stage.setOnCloseRequest(e -> { e.consume(); closeWindow(); });
++        scene.addEventFilter(MouseEvent.MOUSE_MOVED, this::edgeMoved);
++        scene.addEventFilter(MouseEvent.MOUSE_PRESSED, this::edgePressed);
++        scene.addEventFilter(MouseEvent.MOUSE_DRAGGED, this::edgeDragged);
++        scene.addEventFilter(MouseEvent.MOUSE_RELEASED, e -> resizeMask = 0);
++    }
++
++    /** Checks every dirty editor (Save / Discard / Cancel) before the app exits. */
++    private void closeWindow() { confirmClosing(new ArrayList<>(entries).iterator()); }
++
++    private void confirmClosing(Iterator<TabEntry> remaining) {
++        while (remaining.hasNext()) {
++            TabEntry entry = remaining.next();
++            if (entry.editor != null && entry.editor.isDirty()) {
++                select(entry);
++                entry.editor.requestClose(() -> confirmClosing(remaining));
++                return;
++            }
++        }
++        Platform.exit();
++    }
++
++    private void toggleMaximize() {
++        if (stage == null) return;
++        if (maximized) { restoreWindow(); return; }
++        restoreBounds = new double[] { stage.getX(), stage.getY(), stage.getWidth(), stage.getHeight() };
++        List<Screen> screens = Screen.getScreensForRectangle(stage.getX(), stage.getY(), stage.getWidth(), stage.getHeight());
++        Rectangle2D area = (screens.isEmpty() ? Screen.getPrimary() : screens.get(0)).getVisualBounds(); // never covers the taskbar
++        stage.setX(area.getMinX()); stage.setY(area.getMinY()); stage.setWidth(area.getWidth()); stage.setHeight(area.getHeight());
++        maximized = true; updateMaxIcon();
++    }
++
++    private void restoreWindow() {
++        if (restoreBounds != null) { stage.setX(restoreBounds[0]); stage.setY(restoreBounds[1]); stage.setWidth(restoreBounds[2]); stage.setHeight(restoreBounds[3]); }
++        maximized = false; updateMaxIcon();
++    }
++
++    private void updateMaxIcon() {
++        maxButton.setGraphic(iconBox(maximized ? FxUtil.RESTORE : FxUtil.MAXIMIZE));
++        maxButton.getTooltip().setText(maximized ? "Restore" : "Maximize");
++    }
++
++    private boolean interactive(Object target) {
++        Node node = target instanceof Node n ? n : null;
++        while (node != null && node != topBar) {
++            if (node instanceof ButtonBase || node.getStyleClass().contains("tab-pill")) return true;
++            node = node.getParent();
++        }
++        return false;
++    }
++
++    private void barPressed(MouseEvent e) {
++        if (stage == null) return;
++        dragging = !interactive(e.getTarget());
++        if (!dragging) return;
++        if (e.getClickCount() == 2) { toggleMaximize(); dragging = false; return; }
++        dragOffsetX = e.getScreenX() - stage.getX(); dragOffsetY = e.getScreenY() - stage.getY();
++    }
++
++    private void barDragged(MouseEvent e) {
++        if (stage == null || !dragging) return;
++        if (maximized) { // un-maximize proportionally so the cursor stays at the same relative spot on the bar
++            double ratio = dragOffsetX / Math.max(1, stage.getWidth());
++            restoreWindow(); dragOffsetX = ratio * stage.getWidth();
++        }
++        stage.setX(e.getScreenX() - dragOffsetX); stage.setY(e.getScreenY() - dragOffsetY);
++    }
++
++    private int edgeMask(MouseEvent e, Scene scene) {
++        int mask = 0;
++        if (e.getSceneX() < EDGE) mask |= 1;
++        if (e.getSceneX() > scene.getWidth() - EDGE) mask |= 2;
++        if (e.getSceneY() < EDGE) mask |= 4;
++        if (e.getSceneY() > scene.getHeight() - EDGE) mask |= 8;
++        return mask;
++    }
++
++    private void edgeMoved(MouseEvent e) {
++        Scene scene = root.getScene();
++        int mask = maximized ? 0 : edgeMask(e, scene);
++        scene.setCursor(switch (mask) {
++            case 1, 2 -> Cursor.H_RESIZE; case 4, 8 -> Cursor.V_RESIZE;
++            case 5, 10 -> Cursor.NW_RESIZE; case 6, 9 -> Cursor.NE_RESIZE;
++            default -> Cursor.DEFAULT;
++        });
++    }
++
++    private void edgePressed(MouseEvent e) {
++        if (maximized || stage == null) return;
++        resizeMask = edgeMask(e, root.getScene());
++        if (resizeMask == 0) return;
++        startX = stage.getX(); startY = stage.getY(); startW = stage.getWidth(); startH = stage.getHeight();
++        startScreenX = e.getScreenX(); startScreenY = e.getScreenY();
++        e.consume();
++    }
++
++    private void edgeDragged(MouseEvent e) {
++        if (resizeMask == 0 || stage == null) return;
++        double dx = e.getScreenX() - startScreenX, dy = e.getScreenY() - startScreenY;
++        double minW = stage.getMinWidth(), minH = stage.getMinHeight();
++        double x = startX, y = startY, w = startW, h = startH;
++        if ((resizeMask & 2) != 0) w = Math.max(minW, startW + dx);
++        if ((resizeMask & 1) != 0) { w = Math.max(minW, startW - dx); x = startX + (startW - w); }
++        if ((resizeMask & 8) != 0) h = Math.max(minH, startH + dy);
++        if ((resizeMask & 4) != 0) { h = Math.max(minH, startH - dy); y = startY + (startH - h); }
++        stage.setX(x); stage.setY(y); stage.setWidth(w); stage.setHeight(h);
++        e.consume();
+     }
+ }
+diff --git a/src/main/java/com/deepnote/fx/FxUtil.java b/src/main/java/com/deepnote/fx/FxUtil.java
+index 41c9ed8..28340b3 100644
+--- a/src/main/java/com/deepnote/fx/FxUtil.java
++++ b/src/main/java/com/deepnote/fx/FxUtil.java
+@@ -25,6 +25,11 @@ final class FxUtil {
+     static final String DOC = "M4 1.5h5.5L13 5v9.5H4z M9.5 1.5V5H13";
+     static final String PENCIL = "M11.5 2.5l2 2L5 13l-3 1l1-3z M10 4l2 2";
+     static final String TRASH = "M2.5 4.5h11 M6 4.5V3h4v1.5 M4 4.5l.7 8.5h6.6l.7-8.5 M6.8 7v4 M9.2 7v4";
++    static final String BACK = "M13 8H3 M7.5 3.5L3 8l4.5 4.5";
++    static final String MINIMIZE = "M3 8.5h10";
++    static final String MAXIMIZE = "M3.5 3.5h9v9h-9z";
++    static final String RESTORE = "M5.5 5.5v-2h7v7h-2 M3.5 5.5h7v7h-7z";
++    static final String CLOSE = "M3.5 3.5l9 9 M12.5 3.5l-9 9";
+     static final String SAVE = "M8 2v7.5 M5 7l3 3l3-3 M2.5 10v3.5h11V10";
+ 
+     private FxUtil() { }
+diff --git a/src/main/java/com/deepnote/fx/MarkdownView.java b/src/main/java/com/deepnote/fx/MarkdownView.java
+new file mode 100644
+index 0000000..cfbf6c4
+--- /dev/null
++++ b/src/main/java/com/deepnote/fx/MarkdownView.java
+@@ -0,0 +1,92 @@
++package com.deepnote.fx;
++
++import javafx.geometry.Insets;
++import javafx.geometry.Pos;
++import javafx.scene.Node;
++import javafx.scene.control.Label;
++import javafx.scene.layout.HBox;
++import javafx.scene.layout.Priority;
++import javafx.scene.layout.VBox;
++import javafx.scene.text.Text;
++import javafx.scene.text.TextFlow;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++/** Minimal Markdown-to-JavaFX renderer: headings, **bold**, `code`, fenced code blocks, bullet and numbered lists. */
++final class MarkdownView {
++    private static final Pattern INLINE = Pattern.compile("\\*\\*(.+?)\\*\\*|`([^`]+)`");
++    private static final Pattern HEADING = Pattern.compile("^\\s{0,3}(#{1,6})\\s+(.*)$");
++    private static final Pattern BULLET = Pattern.compile("^(\\s*)[-*+]\\s+(.*)$");
++    private static final Pattern NUMBERED = Pattern.compile("^(\\s*)(\\d+)[.)]\\s+(.*)$");
++
++    private MarkdownView() { }
++
++    static VBox render(String markdown) {
++        VBox box = new VBox(6); box.getStyleClass().add("md-root");
++        List<String> paragraph = new ArrayList<>();
++        String[] lines = markdown.replace("\r\n", "\n").split("\n", -1);
++        for (int i = 0; i < lines.length; i++) {
++            String line = lines[i];
++            if (line.strip().startsWith("```")) {
++                flush(box, paragraph);
++                StringBuilder code = new StringBuilder();
++                i++;
++                while (i < lines.length && !lines[i].strip().startsWith("```")) { if (code.length() > 0) code.append('\n'); code.append(lines[i]); i++; }
++                box.getChildren().add(codeBlock(code.toString()));
++                continue;
++            }
++            Matcher heading = HEADING.matcher(line), bullet = BULLET.matcher(line), numbered = NUMBERED.matcher(line);
++            if (line.isBlank()) flush(box, paragraph);
++            else if (heading.matches()) { flush(box, paragraph); box.getChildren().add(inline(heading.group(2).strip(), heading.group(1).length() == 1 ? "md-h1" : "md-h2")); }
++            else if (bullet.matches()) { flush(box, paragraph); box.getChildren().add(listItem("•", bullet.group(1).length(), bullet.group(2))); }
++            else if (numbered.matches()) { flush(box, paragraph); box.getChildren().add(listItem(numbered.group(2) + ".", numbered.group(1).length(), numbered.group(3))); }
++            else paragraph.add(line.strip());
++        }
++        flush(box, paragraph);
++        if (box.getChildren().isEmpty()) box.getChildren().add(inline(markdown, "md-text"));
++        return box;
++    }
++
++    private static void flush(VBox box, List<String> paragraph) {
++        if (paragraph.isEmpty()) return;
++        box.getChildren().add(inline(String.join("\n", paragraph), "md-text"));
++        paragraph.clear();
++    }
++
++    private static Node listItem(String marker, int indentSpaces, String text) {
++        Label mark = new Label(marker); mark.getStyleClass().add("md-marker"); mark.setMinWidth(18); mark.setAlignment(Pos.TOP_RIGHT);
++        TextFlow flow = inline(text, "md-text"); HBox.setHgrow(flow, Priority.ALWAYS);
++        HBox row = new HBox(6, mark, flow); row.setAlignment(Pos.TOP_LEFT);
++        row.setPadding(new Insets(0, 0, 0, Math.min(indentSpaces, 8) * 5));
++        return row;
++    }
++
++    private static Node codeBlock(String code) {
++        Label label = new Label(code); label.getStyleClass().add("md-code-text"); label.setWrapText(true); label.setMaxWidth(Double.MAX_VALUE);
++        VBox block = new VBox(label); block.getStyleClass().add("md-code-block");
++        return block;
++    }
++
++    /** Inline spans: **bold** and `code`; everything else is plain text. */
++    static TextFlow inline(String text, String baseClass) {
++        TextFlow flow = new TextFlow(); flow.setMinWidth(0); flow.setMaxWidth(Double.MAX_VALUE);
++        Matcher m = INLINE.matcher(text);
++        int from = 0;
++        while (m.find()) {
++            if (m.start() > from) flow.getChildren().add(span(text.substring(from, m.start()), baseClass));
++            if (m.group(1) != null) flow.getChildren().add(span(m.group(1), baseClass, "md-bold"));
++            else { Label code = new Label(m.group(2)); code.getStyleClass().add("md-inline-code"); flow.getChildren().add(code); }
++            from = m.end();
++        }
++        if (from < text.length()) flow.getChildren().add(span(text.substring(from), baseClass));
++        return flow;
++    }
++
++    private static Text span(String value, String... classes) {
++        Text text = new Text(value); text.getStyleClass().addAll(classes);
++        return text;
++    }
++}
+diff --git a/src/main/resources/com/deepnote/fx/assistant-panel.fxml b/src/main/resources/com/deepnote/fx/assistant-panel.fxml
+index 440727c..9b0f404 100644
+--- a/src/main/resources/com/deepnote/fx/assistant-panel.fxml
++++ b/src/main/resources/com/deepnote/fx/assistant-panel.fxml
+@@ -4,7 +4,7 @@
+ <?import javafx.scene.layout.*?>
+ <VBox xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.AssistantPanelController" prefWidth="360.0" minWidth="310.0" styleClass="ai-panel">
+     <HBox alignment="CENTER_LEFT" styleClass="ai-header">
+-        <StackPane styleClass="ai-badge"><Label text="✦" styleClass="ai-badge-text"/></StackPane>
++        <StackPane styleClass="ai-badge, assistant-sparkle-badge" minWidth="28" prefWidth="28" maxWidth="28" minHeight="28" prefHeight="28" maxHeight="28"><Label text="✦" styleClass="ai-badge-text"/></StackPane>
+         <VBox spacing="2" HBox.hgrow="ALWAYS" minWidth="0">
+             <HBox alignment="CENTER_LEFT" spacing="8">
+                 <Label text="DeepNote AI" styleClass="panel-title"/>
+diff --git a/src/main/resources/com/deepnote/fx/foundation.css b/src/main/resources/com/deepnote/fx/foundation.css
+index b33e628..36ea305 100644
+--- a/src/main/resources/com/deepnote/fx/foundation.css
++++ b/src/main/resources/com/deepnote/fx/foundation.css
+@@ -27,10 +27,11 @@
+     -fx-background-color: -background; -fx-text-fill: -text-primary;
+ }
+ .label { -fx-text-fill: -text-primary; }
++.app-root { -fx-border-color: -border-subtle; -fx-border-width: 1; }
+ .app-root, .home-page, .editor-view, .editor-canvas, .workspace { -fx-background-color: -background; }
+ 
+ /* ---------- typography helpers ---------- */
+-.mono-label, .status-text, .status-pill, .section-label, .txt-badge, .read-badge, .count-badge,
++.mono-label, .status-text, .section-label, .txt-badge, .read-badge, .count-badge,
+ .key-badge, .context-pill, .model-pill, .status-online, .status-offline, .meta-text {
+     -fx-font-family: "JetBrains Mono", "Consolas", monospace;
+ }
+@@ -92,7 +93,7 @@
+ 
+ /* ---------- top bar & tab strip ---------- */
+ .top-bar {
+-    -fx-min-height: 42; -fx-pref-height: 42; -fx-max-height: 42; -fx-padding: 0 12 0 10; -fx-spacing: 12;
++    -fx-min-height: 42; -fx-pref-height: 42; -fx-max-height: 42; -fx-padding: 0 0 0 10; -fx-spacing: 10;
+     -fx-background-color: -background; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0;
+ }
+ .tab-pill {
+@@ -119,10 +120,6 @@
+ .dot-blue { -fx-fill: -primary; }
+ .dot-green { -fx-fill: -success; }
+ .dot-amber { -fx-fill: -warning; }
+-.status-pill {
+-    -fx-font-size: 11px; -fx-text-fill: -text-muted; -fx-padding: 4 10; -fx-graphic-text-gap: 7;
+-    -fx-background-color: -surface; -fx-background-radius: 12; -fx-border-color: -border-subtle; -fx-border-radius: 12;
+-}
+ 
+ /* ---------- bottom status bar ---------- */
+ .bottom-bar {
+@@ -235,7 +232,7 @@
+ /* ---------- AI panel ---------- */
+ .ai-panel { -fx-background-color: -background; -fx-border-color: -border-subtle; -fx-border-width: 0 0 0 1; -fx-pref-width: 360; -fx-min-width: 310; }
+ .ai-header { -fx-min-height: 52; -fx-pref-height: 52; -fx-max-height: 52; -fx-padding: 0 12 0 14; -fx-spacing: 10; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0; }
+-.ai-badge { -fx-min-width: 28; -fx-pref-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-background-color: -primary; -fx-background-radius: 8; }
++.ai-badge, .assistant-sparkle-badge { -fx-min-width: 28; -fx-max-width: 28; -fx-max-height: 28; -fx-pref-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-background-color: -primary; -fx-background-radius: 8; }
+ .ai-badge-text { -fx-text-fill: -text-primary; -fx-font-size: 14px; -fx-font-weight: bold; }
+ .panel-title { -fx-text-fill: -text-primary; -fx-font-size: 14px; -fx-font-weight: bold; }
+ .model-pill { -fx-font-size: 10px; -fx-text-fill: -secondary; -fx-padding: 2 7; -fx-background-color: -surface; -fx-background-radius: 8; -fx-border-color: -border-subtle; -fx-border-radius: 8; }
+@@ -265,3 +262,72 @@
+ }
+ .send-button:hover { -fx-background-color: -secondary; }
+ .send-button:disabled { -fx-opacity: 0.5; }
++
++/* ---------- window chrome ---------- */
++.top-back-btn {
++    -fx-min-width: 28; -fx-pref-width: 28; -fx-max-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-max-height: 28;
++    -fx-padding: 0; -fx-background-color: -surface; -fx-background-insets: 0; -fx-background-radius: 8;
++    -fx-border-color: -border; -fx-border-radius: 8; -fx-cursor: hand;
++}
++.top-back-btn .icon-path { -fx-stroke: -text-muted; }
++.top-back-btn:hover { -fx-background-color: -surface-hover; -fx-border-color: -primary; }
++.top-back-btn:hover .icon-path { -fx-stroke: -text-primary; }
++.win-button {
++    -fx-min-width: 44; -fx-pref-width: 44; -fx-max-width: 44; -fx-min-height: 42; -fx-pref-height: 42; -fx-max-height: 42;
++    -fx-padding: 0; -fx-background-color: -background; -fx-background-insets: 0; -fx-background-radius: 0;
++    -fx-border-color: transparent; -fx-cursor: default;
++}
++.win-button .icon-path { -fx-stroke: -text-muted; -fx-stroke-width: 1.2; }
++.win-button:hover { -fx-background-color: -surface-hover; }
++.win-button:hover .icon-path { -fx-stroke: -text-primary; }
++.win-close:hover { -fx-background-color: #E81123; }
++.win-close:hover .icon-path { -fx-stroke: #FFFFFF; }
++
++/* ---------- invisible (but functional) home scrollbar ---------- */
++.home-scroll-invisible > .scroll-bar:vertical,
++.home-scroll-invisible > .scroll-bar:horizontal {
++    -fx-opacity: 0;
++    -fx-pref-width: 0; -fx-max-width: 0; -fx-min-width: 0;
++    -fx-pref-height: 0; -fx-max-height: 0;
++    -fx-padding: 0;
++}
++
++/* ---------- markdown in AI responses ---------- */
++.md-text { -fx-fill: -text-primary; -fx-font-size: 13px; }
++.md-bold { -fx-font-weight: 700; -fx-fill: -text-primary; }
++.md-h1 { -fx-fill: -text-primary; -fx-font-size: 15px; -fx-font-weight: bold; }
++.md-h2 { -fx-fill: -text-primary; -fx-font-size: 14px; -fx-font-weight: bold; }
++.md-marker { -fx-text-fill: -text-muted; -fx-font-size: 13px; }
++.md-inline-code {
++    -fx-font-family: "JetBrains Mono", "Consolas", monospace; -fx-font-size: 12px; -fx-text-fill: -secondary;
++    -fx-background-color: -border-subtle; -fx-background-radius: 5; -fx-padding: 0 5;
++}
++.md-code-block { -fx-background-color: -background; -fx-background-radius: 8; -fx-border-color: -border-subtle; -fx-border-radius: 8; -fx-padding: 8; }
++.md-code-text { -fx-font-family: "JetBrains Mono", "Consolas", monospace; -fx-font-size: 12px; -fx-text-fill: -tertiary; }
++
++/* ---------- custom dialogs ---------- */
++.dialog-backdrop { -fx-background-color: rgba(0, 0, 0, 0.55); }
++.dialog-card {
++    -fx-background-color: -surface; -fx-background-radius: 14; -fx-border-color: -border; -fx-border-radius: 14; -fx-padding: 24;
++    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.6), 30, 0.2, 0, 8);
++}
++.dialog-title { -fx-text-fill: -text-primary; -fx-font-size: 18px; -fx-font-weight: bold; }
++.dialog-subtitle { -fx-text-fill: -text-muted; -fx-font-size: 13px; }
++.dialog-input, .dialog-input:focused {
++    -fx-min-height: 40; -fx-pref-height: 40; -fx-background-color: -background; -fx-background-insets: 0; -fx-background-radius: 8;
++    -fx-border-color: -border; -fx-border-radius: 8; -fx-border-width: 1; -fx-padding: 0 12;
++    -fx-text-fill: -text-primary; -fx-font-size: 14px; -fx-highlight-fill: -primary-selection; -fx-highlight-text-fill: -text-primary;
++}
++.dialog-input:focused { -fx-border-color: -primary; }
++.dialog-button {
++    -fx-min-height: 36; -fx-padding: 0 18; -fx-background-insets: 0; -fx-background-radius: 8; -fx-border-color: transparent;
++    -fx-font-weight: bold; -fx-font-size: 13px; -fx-cursor: hand;
++}
++.dialog-secondary { -fx-background-color: -surface-hover; -fx-text-fill: -text-primary; }
++.dialog-secondary:hover { -fx-background-color: -surface-raised; }
++.dialog-primary { -fx-background-color: -primary; -fx-text-fill: -text-primary; }
++.dialog-primary:hover { -fx-background-color: -secondary; }
++.dialog-primary:disabled { -fx-opacity: 0.5; }
++.dialog-danger { -fx-background-color: -danger; -fx-text-fill: -text-primary; }
++.dialog-danger:hover { -fx-background-color: #FCA5A5; }
++.dialog-button:focused { -fx-border-color: -tertiary; -fx-border-radius: 8; }
+diff --git a/src/main/resources/com/deepnote/fx/foundation.fxml b/src/main/resources/com/deepnote/fx/foundation.fxml
+index 7f7ff7f..7d54f2b 100644
+--- a/src/main/resources/com/deepnote/fx/foundation.fxml
++++ b/src/main/resources/com/deepnote/fx/foundation.fxml
+@@ -3,11 +3,16 @@
+ <?import javafx.scene.layout.*?>
+ <BorderPane xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.FoundationController" fx:id="root" styleClass="app-root">
+     <top>
+-        <HBox fx:id="topBar" alignment="CENTER_LEFT" styleClass="top-bar">
++        <HBox fx:id="topBar" alignment="CENTER_LEFT" styleClass="top-bar, top-shell-bar">
++            <Button fx:id="backButton" styleClass="top-back-btn"/>
+             <HBox fx:id="tabStrip" alignment="CENTER_LEFT" spacing="6" minWidth="0" HBox.hgrow="ALWAYS">
+                 <Button fx:id="newHomeButton" text="+" styleClass="tab-add"/>
+             </HBox>
+-            <Label fx:id="statusPill" styleClass="status-pill"/>
++            <HBox fx:id="windowControls" alignment="CENTER_RIGHT" spacing="0">
++                <Button fx:id="minButton" styleClass="win-button" focusTraversable="false"/>
++                <Button fx:id="maxButton" styleClass="win-button" focusTraversable="false"/>
++                <Button fx:id="closeButton" styleClass="win-button, win-close" focusTraversable="false"/>
++            </HBox>
+         </HBox>
+     </top>
+     <center><StackPane fx:id="workspace" styleClass="workspace"/></center>
+diff --git a/src/main/resources/com/deepnote/fx/home-view.fxml b/src/main/resources/com/deepnote/fx/home-view.fxml
+index a37e286..498ad88 100644
+--- a/src/main/resources/com/deepnote/fx/home-view.fxml
++++ b/src/main/resources/com/deepnote/fx/home-view.fxml
+@@ -13,7 +13,7 @@
+         <Button fx:id="clearButton" text="×" styleClass="clear-button" focusTraversable="false"/>
+         <Label fx:id="shortcutBadge" text="Ctrl+K" styleClass="key-badge"/>
+     </HBox>
+-    <ScrollPane fx:id="scroll" fitToWidth="true" hbarPolicy="NEVER" styleClass="page-scroll" VBox.vgrow="ALWAYS">
++    <ScrollPane fx:id="scroll" fitToWidth="true" hbarPolicy="NEVER" styleClass="page-scroll, home-scroll-invisible" VBox.vgrow="ALWAYS">
+         <content>
+             <VBox fx:id="body" spacing="22">
+                 <HBox fx:id="controlsRow" alignment="CENTER_LEFT" spacing="10">

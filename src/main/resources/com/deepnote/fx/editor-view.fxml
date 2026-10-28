@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<BorderPane xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.EditorViewController" fx:id="root" styleClass="editor-view">
+    <center>
+        <HBox alignment="TOP_CENTER" styleClass="editor-canvas">
+            <VBox spacing="16" maxWidth="920.0" HBox.hgrow="ALWAYS" styleClass="editor-column">
+                <padding><Insets top="36" right="48" bottom="24" left="48"/></padding>
+                <HBox alignment="TOP_LEFT" spacing="16">
+                    <VBox spacing="8" HBox.hgrow="ALWAYS" minWidth="0">
+                        <Label fx:id="titleLabel" styleClass="editor-title" wrapText="true" maxWidth="Infinity"/>
+                        <Label fx:id="metadataLabel" styleClass="editor-meta"/>
+                    </VBox>
+                    <HBox fx:id="actions" alignment="CENTER_RIGHT" spacing="8">
+                        <Button fx:id="renameButton" styleClass="icon-square"/>
+                        <Button fx:id="deleteButton" styleClass="icon-square"/>
+                        <Button fx:id="saveButton" styleClass="icon-square"/>
+                        <Button fx:id="askButton" text="✦ Ask DeepNote" styleClass="ask-button"/>
+                    </HBox>
+                </HBox>
+                <Region styleClass="divider-line"/>
+                <TextArea fx:id="contentArea" wrapText="true" styleClass="note-editor" VBox.vgrow="ALWAYS"/>
+            </VBox>
+        </HBox>
+    </center>
+</BorderPane>

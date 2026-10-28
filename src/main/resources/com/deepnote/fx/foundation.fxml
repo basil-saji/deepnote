@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<BorderPane xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.FoundationController" fx:id="root" styleClass="app-root">
+    <top>
+        <HBox fx:id="topBar" alignment="CENTER_LEFT" styleClass="top-bar, top-shell-bar">
+            <Button fx:id="backButton" styleClass="top-back-btn"/>
+            <HBox fx:id="tabStrip" alignment="CENTER_LEFT" spacing="6" minWidth="0" HBox.hgrow="ALWAYS">
+                <Button fx:id="newHomeButton" text="+" styleClass="tab-add"/>
+            </HBox>
+            <HBox fx:id="windowControls" alignment="CENTER_RIGHT" spacing="0">
+                <Button fx:id="minButton" styleClass="win-button" focusTraversable="false"/>
+                <Button fx:id="maxButton" styleClass="win-button" focusTraversable="false"/>
+                <Button fx:id="closeButton" styleClass="win-button, win-close" focusTraversable="false"/>
+            </HBox>
+        </HBox>
+    </top>
+    <center><StackPane fx:id="workspace" styleClass="workspace"/></center>
+    <bottom>
+        <HBox alignment="CENTER_LEFT" styleClass="bottom-bar">
+            <Label fx:id="statusLeft" styleClass="status-text"/>
+            <Region HBox.hgrow="ALWAYS"/>
+            <Label fx:id="statusRight" styleClass="status-text"/>
+        </HBox>
+    </bottom>
+</BorderPane>

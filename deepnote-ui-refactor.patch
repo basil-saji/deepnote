@@ -1,0 +1,1608 @@
+diff --git a/src/main/java/com/deepnote/fx/AssistantPanelController.java b/src/main/java/com/deepnote/fx/AssistantPanelController.java
+index 6fbb694..cdcf14f 100644
+--- a/src/main/java/com/deepnote/fx/AssistantPanelController.java
++++ b/src/main/java/com/deepnote/fx/AssistantPanelController.java
+@@ -1,53 +1,181 @@
+ package com.deepnote.fx;
+ 
+ import com.deepnote.ai.AIAssistantService;
++import com.deepnote.config.AppConfig;
+ import com.deepnote.model.ChatMessage;
+-import javafx.concurrent.Task;
++import javafx.animation.PauseTransition;
+ import javafx.fxml.FXML;
++import javafx.geometry.Pos;
++import javafx.scene.Node;
+ import javafx.scene.control.*;
+-import javafx.scene.layout.FlowPane;
++import javafx.scene.input.Clipboard;
++import javafx.scene.input.ClipboardContent;
++import javafx.scene.input.KeyCode;
++import javafx.scene.layout.HBox;
++import javafx.scene.layout.Priority;
++import javafx.scene.layout.Region;
+ import javafx.scene.layout.VBox;
++import javafx.util.Duration;
+ 
++import java.net.URI;
++import java.net.http.HttpClient;
++import java.net.http.HttpRequest;
++import java.net.http.HttpResponse;
++import java.time.LocalTime;
++import java.time.format.DateTimeFormatter;
++import java.util.ArrayList;
+ import java.util.List;
+ import java.util.function.Consumer;
+ import java.util.function.Supplier;
+ 
+-/** FXML-backed, note-scoped local AI assistant. */
++/** Note-scoped local AI assistant docked beside the editor. */
+ public final class AssistantPanelController {
+-    @FXML private Label statusLabel, thinkingLabel;
+-    @FXML private VBox welcome;
+-    @FXML private FlowPane suggestions;
+-    @FXML private ListView<String> messages;
+-    @FXML private TextArea composer;
++    private record Reply(String text, long millis) { }
++
++    private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm");
++
++    @FXML private Label modelPill, statusLabel, contextPill;
++    @FXML private VBox welcome, messageBox, suggestions, composerBox;
++    @FXML private ScrollPane scroll;
++    @FXML private TextArea composerInput;
+     @FXML private Button sendButton, clearButton, closeButton;
++
+     private AIAssistantService service;
+-    private String title;
+-    private Supplier<String> content = () -> "";
+-    private List<ChatMessage> history;
++    private Supplier<String> title = () -> "", content = () -> "";
++    private Consumer<String> insertHandler = text -> { };
++    private Runnable closeHandler = () -> { };
++    private List<ChatMessage> history = new ArrayList<>();
+     private boolean running;
+ 
+     @FXML private void initialize() {
+-        for (String suggestion : List.of("Summarize this note", "Explain it simply", "List key takeaways", "What details are missing?")) {
+-            Button button = new Button(suggestion); button.getStyleClass().add("suggestion-button");
+-            button.setOnAction(e -> { composer.setText(suggestion); send(); }); suggestions.getChildren().add(button);
++        for (String prompt : List.of("Summarize this note", "Explain it simply", "List key takeaways", "What details are missing?")) {
++            Button button = new Button(prompt); button.getStyleClass().add("suggestion-button"); button.setMaxWidth(Double.MAX_VALUE);
++            button.setOnAction(e -> { composerInput.setText(prompt); send(); });
++            suggestions.getChildren().add(button);
+         }
+-        sendButton.setOnAction(e -> send()); clearButton.setOnAction(e -> { history.clear(); messages.getItems().clear(); welcome.setVisible(true); welcome.setManaged(true); });
+-        composer.setOnKeyPressed(e -> { if (e.getCode() == javafx.scene.input.KeyCode.ENTER && !e.isShiftDown()) { e.consume(); send(); } });
+-        closeButton.setOnAction(e -> { if (closeHandler != null) closeHandler.run(); });
++        sendButton.setOnAction(e -> send());
++        clearButton.setOnAction(e -> clearChat());
++        closeButton.setOnAction(e -> closeHandler.run());
++        clearButton.setTooltip(new Tooltip("Clear chat")); closeButton.setTooltip(new Tooltip("Close panel"));
++        composerInput.setOnKeyPressed(e -> { if (e.getCode() == KeyCode.ENTER && !e.isShiftDown()) { e.consume(); send(); } });
++        composerInput.focusedProperty().addListener((o, old, focused) -> FxUtil.toggleClass(composerBox, "focus-within", focused));
++        messageBox.heightProperty().addListener((o, old, height) -> scroll.setVvalue(1.0));
+     }
+-    private Runnable closeHandler;
+-    public void configure(AIAssistantService assistant, String noteTitle, Supplier<String> noteContent, List<ChatMessage> session, Runnable close) {
+-        service = assistant; title = noteTitle; content = noteContent; history = session; closeHandler = close; statusLabel.setText("Local model · request on demand"); refresh();
++
++    public void configure(AppConfig config, AIAssistantService assistant, Supplier<String> noteTitle, Supplier<String> noteContent,
++                          List<ChatMessage> session, Consumer<String> insert, Runnable close) {
++        service = assistant; title = noteTitle; content = noteContent; history = session; insertHandler = insert; closeHandler = close;
++        modelPill.setText(config.chatModelName());
++        contextPill.setText("@" + noteTitle.get());
++        for (ChatMessage message : history) {
++            messageBox.getChildren().add(message.role() == ChatMessage.Role.USER ? userBubble(message.content(), null) : assistantCard(message.content(), -1));
++        }
++        FxUtil.show(welcome, history.isEmpty());
++        checkConnection(config);
++        composerInput.requestFocus();
+     }
+-    private void refresh() { messages.getItems().clear(); history.forEach(m -> messages.getItems().add(label(m))); welcome.setVisible(history.isEmpty()); welcome.setManaged(history.isEmpty()); }
+-    private String label(ChatMessage message) { return (message.role() == ChatMessage.Role.USER ? "YOU\n" : "DEEPNOTE AI\n") + message.content(); }
++
++    // ---------------------------------------------------------------- sending
++
+     private void send() {
+-        String prompt = composer.getText().trim(); if (prompt.isBlank() || running) return; running = true; sendButton.setDisable(true); composer.clear(); messages.getItems().add("YOU\n" + prompt); thinkingLabel.setText("Thinking…"); welcome.setVisible(false); welcome.setManaged(false);
+-        String capturedContent = content.get();
+-        Task<String> task = new Task<>() { @Override protected String call() { return service.answer(title, capturedContent, history, prompt); } };
+-        task.setOnSucceeded(e -> { String answer = task.getValue(); history.add(new ChatMessage(ChatMessage.Role.USER, prompt)); history.add(new ChatMessage(ChatMessage.Role.ASSISTANT, answer)); messages.getItems().add("DEEPNOTE AI\n" + answer); finish(""); });
+-        task.setOnFailed(e -> { messages.getItems().add("LOCAL MODEL ERROR\n" + task.getException().getMessage()); composer.setText(prompt); finish("Request failed · retry available"); });
+-        Thread worker = new Thread(task, "deepnote-ollama"); worker.setDaemon(true); worker.start();
+-    }
+-    private void finish(String state) { running = false; sendButton.setDisable(false); thinkingLabel.setText(state); }
++        String prompt = composerInput.getText().trim();
++        if (prompt.isBlank() || running) return;
++        running = true; sendButton.setDisable(true); composerInput.clear(); FxUtil.show(welcome, false);
++        messageBox.getChildren().add(userBubble(prompt, LocalTime.now()));
++        Node thinking = thinkingCard(); messageBox.getChildren().add(thinking);
++        String noteTitle = title.get(), noteContent = content.get();
++        List<ChatMessage> snapshot = new ArrayList<>(history);
++        contextPill.setText("@" + noteTitle);
++        FxUtil.async(() -> {
++            long started = System.nanoTime();
++            String answer = service.answer(noteTitle, noteContent, snapshot, prompt);
++            return new Reply(answer, (System.nanoTime() - started) / 1_000_000);
++        }, reply -> {
++            messageBox.getChildren().remove(thinking);
++            history.add(new ChatMessage(ChatMessage.Role.USER, prompt));
++            history.add(new ChatMessage(ChatMessage.Role.ASSISTANT, reply.text()));
++            messageBox.getChildren().add(assistantCard(reply.text(), reply.millis()));
++            setOnline(true); finish();
++        }, error -> {
++            messageBox.getChildren().remove(thinking);
++            messageBox.getChildren().add(errorCard(error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage()));
++            composerInput.setText(prompt);
++            finish();
++        });
++    }
++
++    private void finish() { running = false; sendButton.setDisable(false); composerInput.requestFocus(); }
++
++    private void clearChat() {
++        history.clear();
++        messageBox.getChildren().removeIf(node -> node != welcome);
++        FxUtil.show(welcome, true);
++    }
++
++    // ---------------------------------------------------------------- message nodes
++
++    private Node userBubble(String text, LocalTime time) {
++        Label meta = new Label(time == null ? "You" : "You • " + time.format(CLOCK)); meta.getStyleClass().add("chat-meta");
++        Label bubble = new Label(text); bubble.getStyleClass().add("user-bubble"); bubble.setWrapText(true); bubble.setMaxWidth(290);
++        VBox box = new VBox(4, meta, bubble); box.setAlignment(Pos.CENTER_RIGHT);
++        return box;
++    }
++
++    private Node assistantCard(String text, long millis) {
++        Label who = new Label("✦ DeepNote AI"); who.getStyleClass().add("chat-meta");
++        Region gap = new Region(); HBox.setHgrow(gap, Priority.ALWAYS);
++        HBox meta = new HBox(8, who, gap); meta.setAlignment(Pos.CENTER_LEFT);
++        if (millis >= 0) { Label took = new Label("Thought in " + millis + "ms"); took.getStyleClass().add("chat-meta"); meta.getChildren().add(took); }
++
++        Label body = new Label(text); body.getStyleClass().add("ai-text"); body.setWrapText(true); body.setMaxWidth(Double.MAX_VALUE);
++        Button insert = new Button("+ Insert to note"); insert.getStyleClass().add("copy-button");
++        insert.setOnAction(e -> { insertHandler.accept(text); flash(insert, "✓ Inserted", "+ Insert to note"); });
++        Button copy = new Button("⧉ Copy"); copy.getStyleClass().add("copy-button");
++        copy.setOnAction(e -> {
++            ClipboardContent clip = new ClipboardContent(); clip.putString(text); Clipboard.getSystemClipboard().setContent(clip);
++            flash(copy, "✓ Copied", "⧉ Copy");
++        });
++        HBox actions = new HBox(8, insert, copy);
++        VBox card = new VBox(10, body, actions); card.getStyleClass().add("ai-card");
++        return new VBox(4, meta, card);
++    }
++
++    private Node thinkingCard() {
++        Label who = new Label("✦ DeepNote AI"); who.getStyleClass().add("chat-meta");
++        Label body = new Label("Thinking…"); body.getStyleClass().add("ai-thinking");
++        VBox card = new VBox(body); card.getStyleClass().add("ai-card");
++        return new VBox(4, who, card);
++    }
++
++    private Node errorCard(String message) {
++        Label who = new Label("LOCAL MODEL ERROR"); who.getStyleClass().add("chat-meta");
++        Label body = new Label(message); body.getStyleClass().add("ai-text"); body.setWrapText(true); body.setMaxWidth(Double.MAX_VALUE);
++        VBox card = new VBox(body); card.getStyleClass().addAll("ai-card", "error");
++        return new VBox(4, who, card);
++    }
++
++    private void flash(Button button, String temporary, String original) {
++        button.setText(temporary);
++        PauseTransition pause = new PauseTransition(Duration.seconds(1.2));
++        pause.setOnFinished(e -> button.setText(original)); pause.play();
++    }
++
++    // ---------------------------------------------------------------- Ollama status
++
++    private void checkConnection(AppConfig config) {
++        statusLabel.setText("● Checking…"); setStatusStyle(false);
++        String base = config.ollamaBaseUrl().replaceAll("/+$", "");
++        FxUtil.async(() -> {
++            HttpClient client = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(2)).build();
++            HttpRequest request = HttpRequest.newBuilder(URI.create(base + "/api/tags")).timeout(java.time.Duration.ofSeconds(2)).GET().build();
++            return client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode() == 200;
++        }, this::setOnline, error -> setOnline(false));
++    }
++
++    private void setOnline(boolean online) { statusLabel.setText(online ? "● Connected" : "● Offline"); setStatusStyle(online); }
++
++    private void setStatusStyle(boolean online) {
++        statusLabel.getStyleClass().removeAll("status-online", "status-offline");
++        statusLabel.getStyleClass().add(online ? "status-online" : "status-offline");
++    }
+ }
+diff --git a/src/main/java/com/deepnote/fx/EditorViewController.java b/src/main/java/com/deepnote/fx/EditorViewController.java
+index 3c38dd5..1449ec7 100644
+--- a/src/main/java/com/deepnote/fx/EditorViewController.java
++++ b/src/main/java/com/deepnote/fx/EditorViewController.java
+@@ -1,46 +1,151 @@
+ package com.deepnote.fx;
+ 
+-import com.deepnote.exception.NoteStorageException;
+ import com.deepnote.model.Note;
+ import com.deepnote.service.NoteService;
++import javafx.beans.property.BooleanProperty;
++import javafx.beans.property.SimpleBooleanProperty;
+ import javafx.fxml.FXML;
++import javafx.scene.Node;
+ import javafx.scene.control.*;
+-import javafx.scene.layout.HBox;
++import javafx.scene.layout.BorderPane;
++import javafx.scene.layout.StackPane;
+ 
++import java.time.Instant;
+ import java.util.Optional;
+ import java.util.function.Consumer;
+ 
+-/** FXML-backed plain-text editor and note toolbar. */
++/** Plain-text note editor: centred reading column, icon toolbar and borderless text area. */
+ public final class EditorViewController {
++    @FXML private BorderPane root;
+     @FXML private Label titleLabel, metadataLabel;
+-    @FXML private TextArea editor;
+-    @FXML private HBox actions;
++    @FXML private TextArea contentArea;
++    @FXML private Button renameButton, deleteButton, saveButton, askButton;
++
++    private final BooleanProperty dirty = new SimpleBooleanProperty(false);
+     private NoteService noteService;
+     private Note note;
+-    private boolean dirty;
+-    private Consumer<EditorViewController> askAction = ignored -> { };
+-    private Consumer<String> renamedAction = ignored -> { };
++    private Instant lastEdited = Instant.now();
++    private String modelName = "";
++    private boolean loading, assistantOpen;
++    private Runnable askAction = () -> { };
+     private Runnable deletedAction = () -> { };
++    private Runnable savedAction = () -> { };
++    private Runnable stateListener = () -> { };
++    private Consumer<String> renamedAction = ignored -> { };
+ 
+-    @FXML private void initialize() { editor.textProperty().addListener((o, old, value) -> { dirty = true; updateMetadata(value); }); }
+-    public void configure(NoteService service, Note initial, Consumer<EditorViewController> ask, Runnable deleted) {
+-        noteService = service; note = initial; askAction = ask; deletedAction = deleted; editor.setText(initial.content()); dirty = false; titleLabel.setText(initial.title()); updateMetadata(initial.content());
+-        Button rename = button("Rename", "secondary-button", "Rename note"); Button save = button("Save", "secondary-button", "Save note (Ctrl+S)"); Button delete = button("Delete", "danger-button", "Delete note"); Button askButton = button("Ask about this note", "primary-button", "Ask DeepNote about the active note");
+-        rename.setOnAction(e -> rename()); save.setOnAction(e -> save()); delete.setOnAction(e -> delete()); askButton.setOnAction(e -> askAction.accept(this)); actions.getChildren().setAll(rename, save, delete, askButton);
++    @FXML private void initialize() {
++        setIcon(renameButton, FxUtil.PENCIL, "Rename note");
++        setIcon(deleteButton, FxUtil.TRASH, "Delete note"); deleteButton.getStyleClass().add("danger");
++        setIcon(saveButton, FxUtil.SAVE, "Save note (Ctrl+S)");
++        askButton.setTooltip(new Tooltip("Ask DeepNote about this note (Ctrl+J)"));
++        renameButton.setOnAction(e -> rename());
++        deleteButton.setOnAction(e -> delete());
++        saveButton.setOnAction(e -> save());
++        askButton.setOnAction(e -> askAction.run());
++        contentArea.textProperty().addListener((o, old, value) -> {
++            if (!loading) dirty.set(true);
++            updateMetadata(); stateListener.run();
++        });
++        contentArea.caretPositionProperty().addListener((o, old, pos) -> stateListener.run());
++        dirty.addListener((o, old, value) -> { FxUtil.toggleClass(saveButton, "dirty", value); stateListener.run(); });
+     }
++
++    public void configure(NoteService service, Note initial, Instant modified, String model) {
++        noteService = service; note = initial; lastEdited = modified == null ? Instant.now() : modified; modelName = model;
++        loading = true; contentArea.setText(initial.content()); loading = false;
++        dirty.set(false); titleLabel.setText(initial.title()); updateMetadata();
++    }
++
++    public void setAskAction(Runnable callback) { askAction = callback; }
++    public void setDeletedAction(Runnable callback) { deletedAction = callback; }
++    public void setSavedAction(Runnable callback) { savedAction = callback; }
+     public void setRenamedAction(Consumer<String> callback) { renamedAction = callback; }
++    public void setStateListener(Runnable callback) { stateListener = callback; }
++
+     public Note note() { return note; }
+-    public String currentContent() { return editor.getText(); }
+-    public boolean isDirty() { return dirty; }
+-    public void save() { try { note = noteService.saveNote(note, editor.getText()); dirty = false; titleLabel.setText(note.title()); updateMetadata(editor.getText()); } catch (NoteStorageException ex) { error(ex.getMessage()); } }
+-    public boolean confirmClose() {
+-        if (!dirty) return true;
++    public String currentContent() { return contentArea.getText(); }
++    public boolean isDirty() { return dirty.get(); }
++    public BooleanProperty dirtyProperty() { return dirty; }
++    public boolean isAssistantOpen() { return assistantOpen; }
++    public void focusEditor() { javafx.application.Platform.runLater(contentArea::requestFocus); }
++
++    /** Docks (or removes, when null) the AI panel; the toolbar's Ask button is hidden while the panel is open. */
++    public void setAssistantPanel(Node panel) {
++        root.setRight(panel);
++        assistantOpen = panel != null;
++        FxUtil.show(askButton, !assistantOpen);
++        stateListener.run();
++    }
++
++    /** Inserts AI output at the caret (on its own line) and marks the note dirty. */
++    public void insertText(String text) {
++        int caret = contentArea.getCaretPosition();
++        String before = contentArea.getText();
++        String prefix = caret > 0 && before.charAt(caret - 1) != '\n' ? "\n" : "";
++        contentArea.insertText(caret, prefix + text);
++        contentArea.requestFocus();
++    }
++
++    /** {left, right} text for the global bottom status bar. */
++    public String[] status() {
++        int caret = contentArea.getCaretPosition(), line = 1, column = 1;
++        String text = contentArea.getText();
++        for (int i = 0; i < caret && i < text.length(); i++) { if (text.charAt(i) == '\n') { line++; column = 1; } else column++; }
++        return new String[] { "● UTF-8 • TXT • Ln " + line + ", Col " + column,
++                "AI: " + modelName + " • Ctrl+S Save • Ctrl+J Ask AI" };
++    }
++
++    public void save() { save(null); }
++
++    private void save(Runnable afterSuccess) {
++        String snapshot = contentArea.getText(); Note target = note;
++        FxUtil.async(() -> noteService.saveNote(target, snapshot), saved -> {
++            note = saved; lastEdited = Instant.now();
++            if (snapshot.equals(contentArea.getText())) dirty.set(false);
++            titleLabel.setText(note.title()); updateMetadata(); savedAction.run();
++            if (afterSuccess != null) afterSuccess.run();
++        }, ex -> error(ex.getMessage()));
++    }
++
++    /** Runs {@code proceed} once it is safe to close: immediately if clean, after Save/Discard if dirty, never on Cancel. */
++    public void requestClose(Runnable proceed) {
++        if (!dirty.get()) { proceed.run(); return; }
+         Alert dialog = new Alert(Alert.AlertType.CONFIRMATION, "Save changes to “" + note.title() + "” before closing?", ButtonType.CANCEL, ButtonType.NO, ButtonType.YES);
+-        Optional<ButtonType> answer = dialog.showAndWait(); if (answer.isEmpty() || answer.get() == ButtonType.CANCEL) return false; if (answer.get() == ButtonType.YES) { save(); return !dirty; } return true;
++        Optional<ButtonType> answer = dialog.showAndWait();
++        if (answer.isEmpty() || answer.get() == ButtonType.CANCEL) return;
++        if (answer.get() == ButtonType.YES) save(proceed); else proceed.run();
+     }
+-    private void rename() { TextInputDialog dialog = new TextInputDialog(note.title()); dialog.setTitle("Rename note"); dialog.setHeaderText("Choose a new note title"); dialog.showAndWait().ifPresent(value -> { try { note = noteService.renameNote(note, value); titleLabel.setText(note.title()); renamedAction.accept(note.title()); } catch (NoteStorageException ex) { error(ex.getMessage()); } }); }
+-    private void delete() { Alert dialog = new Alert(Alert.AlertType.CONFIRMATION, "Delete “" + note.title() + "”?", ButtonType.CANCEL, ButtonType.OK); dialog.showAndWait().filter(ButtonType.OK::equals).ifPresent(ok -> { try { noteService.deleteNote(note); deletedAction.run(); } catch (NoteStorageException ex) { error(ex.getMessage()); } }); }
+-    private Button button(String text, String style, String tooltip) { Button button = new Button(text); button.getStyleClass().add(style); button.setTooltip(new Tooltip(tooltip)); return button; }
+-    private void updateMetadata(String value) { long words = java.util.Arrays.stream(value.trim().split("\\s+")).filter(s -> !s.isBlank()).count(); metadataLabel.setText(words + " words  ·  " + value.length() + " characters  ·  UTF-8 TXT  ·  " + (dirty ? "Unsaved changes" : "Saved")); }
+-    private void error(String message) { new Alert(Alert.AlertType.ERROR, message, ButtonType.OK).showAndWait(); }
++
++    private void rename() {
++        TextInputDialog dialog = new TextInputDialog(note.title());
++        dialog.setTitle("Rename note"); dialog.setHeaderText("Choose a new note title");
++        dialog.showAndWait().ifPresent(value -> {
++            Note target = note;
++            FxUtil.async(() -> noteService.renameNote(target, value), renamed -> {
++                note = renamed; titleLabel.setText(note.title()); renamedAction.accept(note.title());
++            }, ex -> error(ex.getMessage()));
++        });
++    }
++
++    private void delete() {
++        Alert dialog = new Alert(Alert.AlertType.CONFIRMATION, "Delete “" + note.title() + "”?", ButtonType.CANCEL, ButtonType.OK);
++        dialog.showAndWait().filter(ButtonType.OK::equals).ifPresent(ok -> {
++            Note target = note;
++            FxUtil.async(() -> { noteService.deleteNote(target); return Boolean.TRUE; }, done -> deletedAction.run(), ex -> error(ex.getMessage()));
++        });
++    }
++
++    private void setIcon(Button button, String path, String tooltip) {
++        StackPane graphic = new StackPane(FxUtil.icon(path)); graphic.setMinSize(16, 16);
++        button.setGraphic(graphic); button.setTooltip(new Tooltip(tooltip));
++    }
++
++    private void updateMetadata() {
++        String value = contentArea.getText() == null ? "" : contentArea.getText();
++        long words = FxUtil.wordCount(value);
++        metadataLabel.setText(words + " words • " + value.length() + " characters • 🕒 " + FxUtil.readMinutes(words)
++                + " min read • Last edited " + FxUtil.relativeTime(lastEdited));
++    }
++
++    private void error(String message) { new Alert(Alert.AlertType.ERROR, message == null ? "Operation failed." : message, ButtonType.OK).showAndWait(); }
+ }
+diff --git a/src/main/java/com/deepnote/fx/FoundationController.java b/src/main/java/com/deepnote/fx/FoundationController.java
+index 70cd29d..8a6873b 100644
+--- a/src/main/java/com/deepnote/fx/FoundationController.java
++++ b/src/main/java/com/deepnote/fx/FoundationController.java
+@@ -1,71 +1,218 @@
+ package com.deepnote.fx;
+ 
+-import com.deepnote.ai.*;
++import com.deepnote.ai.AIAssistantService;
++import com.deepnote.ai.ContextManager;
++import com.deepnote.ai.OllamaChatModelClient;
+ import com.deepnote.config.AppConfig;
+-import com.deepnote.exception.NoteStorageException;
+ import com.deepnote.model.ChatMessage;
+ import com.deepnote.model.Note;
+ import com.deepnote.service.NoteService;
+ import javafx.fxml.FXML;
+ import javafx.fxml.FXMLLoader;
+ import javafx.scene.Node;
++import javafx.scene.Scene;
+ import javafx.scene.control.*;
++import javafx.scene.input.KeyCode;
++import javafx.scene.input.KeyCodeCombination;
++import javafx.scene.input.KeyCombination;
++import javafx.scene.layout.BorderPane;
++import javafx.scene.layout.HBox;
++import javafx.scene.layout.Priority;
+ import javafx.scene.layout.StackPane;
++import javafx.scene.shape.Circle;
+ 
+ import java.io.IOException;
+ import java.nio.file.Path;
+ import java.time.Duration;
++import java.time.Instant;
+ import java.util.*;
+ 
+-/** Small workspace coordinator; substantial screens are FXML-backed focused controllers. */
++/** Workspace shell: single-row tab strip, active view host and live bottom status bar. */
+ public final class FoundationController {
+-    @FXML private TabPane tabs;
++    @FXML private BorderPane root;
++    @FXML private HBox tabStrip;
+     @FXML private Button newHomeButton;
+-    @FXML private Label modelLabel, statusLabel;
++    @FXML private Label statusPill, statusLeft, statusRight;
+     @FXML private StackPane workspace;
++
+     private final AppConfig config = AppConfig.load();
+     private final NoteService noteService = new NoteService(config.notesDirectory());
+-    private final AIAssistantService assistantService = new AIAssistantService(new ContextManager(config.maxRecentChatTurns(), config.contextCharacterBudget()), new OllamaChatModelClient(config.ollamaBaseUrl(), config.chatModelName(), Duration.ofSeconds(config.requestTimeoutSeconds())));
++    private final AIAssistantService assistantService = new AIAssistantService(
++            new ContextManager(config.maxRecentChatTurns(), config.contextCharacterBudget()),
++            new OllamaChatModelClient(config.ollamaBaseUrl(), config.chatModelName(), Duration.ofSeconds(config.requestTimeoutSeconds())));
+     private final Map<Path, List<ChatMessage>> conversations = new HashMap<>();
+-    private final Map<Tab, EditorViewController> editors = new HashMap<>();
+-    private List<Note> notes = List.of();
++    private final List<TabEntry> entries = new ArrayList<>();
++    private final Circle pillDot = new Circle(4);
++    private TabEntry current;
++    private List<NoteItem> items = List.of();
++
++    /** One workspace tab: a pill in the strip plus either a Home view or a note editor. */
++    private final class TabEntry {
++        final HBox pill = new HBox(8);
++        final Circle dot = new Circle(4);
++        final Label titleLabel = new Label();
++        final Tooltip tooltip = new Tooltip();
++        Node content;
++        HomeViewController home;
++        EditorViewController editor;
++
++        TabEntry() {
++            titleLabel.getStyleClass().add("tab-title"); titleLabel.setTextOverrun(OverrunStyle.ELLIPSIS); titleLabel.setMinWidth(24);
++            HBox.setHgrow(titleLabel, Priority.ALWAYS);
++            Button close = new Button("×"); close.getStyleClass().add("tab-close"); close.setFocusTraversable(false);
++            close.setOnAction(e -> { e.consume(); closeEntry(this); });
++            pill.getStyleClass().add("tab-pill"); pill.setAlignment(javafx.geometry.Pos.CENTER_LEFT); pill.setMaxWidth(220);
++            pill.getChildren().addAll(dot, titleLabel, close);
++            pill.setOnMouseClicked(e -> select(this));
++            Tooltip.install(pill, tooltip);
++            updateDot();
++        }
++        void setTitle(String text) { titleLabel.setText(text); tooltip.setText(text); }
++        void updateDot() { setDot(dot, editor == null ? "dot-blue" : editor.isDirty() ? "dot-amber" : "dot-green"); }
++        void updateActive() { FxUtil.toggleClass(pill, "active", this == current); }
++    }
+ 
+     @FXML private void initialize() {
+-        modelLabel.setText("Local workspace · " + config.chatModelName());
+-        newHomeButton.setTooltip(new Tooltip("Open a new Home tab")); newHomeButton.setOnAction(e -> addHomeTab());
+-        tabs.getSelectionModel().selectedItemProperty().addListener((o, old, selected) -> updateStatus(selected));
+-        refreshNotes(); addHomeTab();
++        newHomeButton.setTooltip(new Tooltip("Open a new Home tab"));
++        newHomeButton.setOnAction(e -> addHomeTab());
++        statusPill.setGraphic(pillDot);
++        root.sceneProperty().addListener((o, old, scene) -> { if (scene != null) installShortcuts(scene); });
++        addHomeTab();
++        refreshNotes();
++    }
++
++    private void installShortcuts(Scene scene) {
++        scene.getAccelerators().put(new KeyCodeCombination(KeyCode.N, KeyCombination.SHORTCUT_DOWN), this::newNoteShortcut);
++        scene.getAccelerators().put(new KeyCodeCombination(KeyCode.K, KeyCombination.SHORTCUT_DOWN), this::searchShortcut);
++        scene.getAccelerators().put(new KeyCodeCombination(KeyCode.S, KeyCombination.SHORTCUT_DOWN), () -> { if (current != null && current.editor != null) current.editor.save(); });
++        scene.getAccelerators().put(new KeyCodeCombination(KeyCode.J, KeyCombination.SHORTCUT_DOWN), () -> { if (current != null && current.editor != null) openAssistant(current); });
++    }
++
++    private void newNoteShortcut() { promptCreate(current != null && current.home != null ? current : null); }
++    private void searchShortcut() {
++        if (current == null || current.home == null) { addHomeTab(); return; } // a fresh Home tab focuses its own search field
++        current.home.focusSearch();
+     }
+ 
+-    private void refreshNotes() { try { notes = noteService.listNotes(); } catch (NoteStorageException ex) { statusLabel.setText("Could not load notes · " + ex.getMessage()); notes = List.of(); } }
++    // ---------------------------------------------------------------- notes (disk I/O off the FX thread)
++
++    private void refreshNotes() {
++        FxUtil.async(() -> noteService.listNotes().stream().map(NoteItem::of).toList(), loaded -> {
++            items = loaded;
++            entries.stream().filter(e -> e.home != null).forEach(e -> e.home.setNotes(items));
++            refreshStatus();
++        }, ex -> { statusLeft.setText("Could not load notes · " + ex.getMessage()); items = List.of(); });
++    }
++
++    private void promptCreate(TabEntry source) {
++        TextInputDialog dialog = new TextInputDialog("Untitled note");
++        dialog.setTitle("New note"); dialog.setHeaderText("Create a TXT note");
++        dialog.showAndWait().ifPresent(title -> FxUtil.async(() -> noteService.createNote(title), note -> {
++            refreshNotes(); openNote(source, note);
++        }, ex -> showError("Could not create note", ex.getMessage())));
++    }
++
++    // ---------------------------------------------------------------- tabs
++
+     private void addHomeTab() {
+         try {
+-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/deepnote/fx/home-view.fxml")); Node view = loader.load(); HomeViewController controller = loader.getController();
+-            Tab tab = new Tab("Home", view); tab.setClosable(true); controller.setNotes(notes); controller.setOpenNote(note -> openNote(tab, note)); controller.setCreateNote(() -> createNote(tab));
+-            tab.setOnClosed(e -> { if (tabs.getTabs().isEmpty()) addHomeTab(); }); tabs.getTabs().add(tab); tabs.getSelectionModel().select(tab);
++            FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/deepnote/fx/home-view.fxml"));
++            Node view = loader.load(); HomeViewController controller = loader.getController();
++            TabEntry entry = new TabEntry(); entry.home = controller; entry.content = view; entry.setTitle("Home");
++            controller.setNotes(items);
++            controller.setOpenNote(note -> openNote(entry, note));
++            controller.setCreateNote(() -> promptCreate(entry));
++            controller.setStateListener(() -> { if (entry == current) refreshStatus(); });
++            addEntry(entry);
+         } catch (IOException ex) { showError("Could not open Home", ex.getMessage()); }
+     }
+ 
+-    private void openNote(Tab source, Note note) {
+-        for (Tab tab : tabs.getTabs()) { EditorViewController existing = editors.get(tab); if (existing != null && existing.note().path().equals(note.path())) { tabs.getSelectionModel().select(tab); return; } }
++    private void addEntry(TabEntry entry) {
++        entries.add(entry);
++        tabStrip.getChildren().add(tabStrip.getChildren().size() - 1, entry.pill); // keep the inline "+" last
++        select(entry);
++    }
++
++    private void select(TabEntry entry) {
++        current = entry;
++        workspace.getChildren().setAll(entry.content);
++        entries.forEach(TabEntry::updateActive);
++        refreshStatus();
++        if (entry.home != null) entry.home.focusSearch();
++        if (entry.editor != null) entry.editor.focusEditor();
++    }
++
++    private void closeEntry(TabEntry entry) {
++        if (entry.editor != null) entry.editor.requestClose(() -> removeEntry(entry)); else removeEntry(entry);
++    }
++
++    private void removeEntry(TabEntry entry) {
++        int index = entries.indexOf(entry);
++        if (index < 0) return;
++        entries.remove(index);
++        tabStrip.getChildren().remove(entry.pill);
++        if (entries.isEmpty()) { current = null; addHomeTab(); }
++        else if (entry == current) select(entries.get(Math.min(index, entries.size() - 1)));
++    }
++
++    private void openNote(TabEntry source, Note note) {
++        for (TabEntry existing : entries) {
++            if (existing.editor != null && existing.editor.note().path().equals(note.path())) { select(existing); return; }
++        }
+         try {
+-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/deepnote/fx/editor-view.fxml")); Node view = loader.load(); EditorViewController editor = loader.getController();
+-            editor.configure(noteService, note, this::openAssistant, () -> { editors.remove(source); tabs.getTabs().remove(source); refreshNotes(); if (tabs.getTabs().isEmpty()) addHomeTab(); });
+-            editor.setRenamedAction(source::setText);
+-            source.setText(note.title()); source.setContent(view); source.setOnCloseRequest(e -> { if (!editor.confirmClose()) e.consume(); }); editors.put(source, editor); tabs.getSelectionModel().select(source);
++            FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/deepnote/fx/editor-view.fxml"));
++            Node view = loader.load(); EditorViewController editor = loader.getController();
++            TabEntry entry = source != null && entries.contains(source) ? source : new TabEntry();
++            Instant modified = items.stream().filter(i -> i.note().path().equals(note.path())).map(NoteItem::modified).findFirst().orElse(null);
++            editor.configure(noteService, note, modified, config.chatModelName());
++            editor.setAskAction(() -> openAssistant(entry));
++            editor.setDeletedAction(() -> { removeEntry(entry); refreshNotes(); });
++            editor.setSavedAction(this::refreshNotes);
++            editor.setRenamedAction(title -> { entry.setTitle(title); refreshNotes(); });
++            editor.setStateListener(() -> { entry.updateDot(); if (entry == current) refreshStatus(); });
++            entry.home = null; entry.editor = editor; entry.content = view; entry.setTitle(note.title()); entry.updateDot();
++            if (entries.contains(entry)) select(entry); else addEntry(entry);
+         } catch (IOException ex) { showError("Could not open note", ex.getMessage()); }
+     }
+ 
+-    private void createNote(Tab home) { TextInputDialog dialog = new TextInputDialog("Untitled note"); dialog.setTitle("New note"); dialog.setHeaderText("Create a TXT note"); dialog.showAndWait().ifPresent(title -> { try { Note note = noteService.createNote(title); refreshNotes(); openNote(home, note); } catch (NoteStorageException ex) { showError("Could not create note", ex.getMessage()); } }); }
+-    private void openAssistant(EditorViewController editor) {
++    // ---------------------------------------------------------------- AI panel
++
++    private void openAssistant(TabEntry entry) {
++        EditorViewController editor = entry.editor;
++        if (editor == null || editor.isAssistantOpen()) return;
+         try {
+-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/deepnote/fx/assistant-panel.fxml")); Node panel = loader.load(); AssistantPanelController assistant = loader.getController();
++            FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/deepnote/fx/assistant-panel.fxml"));
++            Node panel = loader.load(); AssistantPanelController assistant = loader.getController();
+             List<ChatMessage> history = conversations.computeIfAbsent(editor.note().path(), ignored -> new ArrayList<>());
+-            assistant.configure(assistantService, editor.note().title(), editor::currentContent, history, () -> ((javafx.scene.layout.BorderPane) editorRoot(editor)).setRight(null));
+-            ((javafx.scene.layout.BorderPane) editorRoot(editor)).setRight(panel);
++            assistant.configure(config, assistantService, () -> editor.note().title(), editor::currentContent, history,
++                    editor::insertText, () -> editor.setAssistantPanel(null));
++            editor.setAssistantPanel(panel);
+         } catch (IOException ex) { showError("Could not open assistant", ex.getMessage()); }
+     }
+-    private Node editorRoot(EditorViewController editor) { for (Tab tab : editors.keySet()) if (editors.get(tab) == editor && tab.getContent() instanceof Node node) return node; throw new IllegalStateException("Editor tab is not open"); }
+-    private void updateStatus(Tab selected) { EditorViewController editor = editors.get(selected); statusLabel.setText(editor == null ? "Local workspace · " + notes.size() + " notes" : "UTF-8 · TXT · " + (editor.isDirty() ? "Unsaved changes" : "Saved")); }
+-    private void showError(String title, String message) { new Alert(Alert.AlertType.ERROR, message, ButtonType.OK).showAndWait(); }
++
++    // ---------------------------------------------------------------- status
++
++    private void refreshStatus() {
++        if (current == null) return;
++        String[] text;
++        if (current.home != null) {
++            text = current.home.status();
++            statusPill.setText("Local Workspace"); setDot(pillDot, "dot-blue");
++        } else {
++            text = current.editor.status();
++            boolean dirty = current.editor.isDirty();
++            statusPill.setText(dirty ? "Unsaved changes" : "Saved"); setDot(pillDot, dirty ? "dot-amber" : "dot-green");
++        }
++        statusLeft.setText(text[0]); statusRight.setText(text[1]);
++    }
++
++    private static void setDot(Circle dot, String styleClass) {
++        dot.getStyleClass().removeAll("dot-blue", "dot-green", "dot-amber");
++        dot.getStyleClass().add(styleClass);
++    }
++
++    private void showError(String title, String message) {
++        Alert alert = new Alert(Alert.AlertType.ERROR, message == null ? title : message, ButtonType.OK);
++        alert.setTitle(title); alert.showAndWait();
++    }
+ }
+diff --git a/src/main/java/com/deepnote/fx/FxUtil.java b/src/main/java/com/deepnote/fx/FxUtil.java
+new file mode 100644
+index 0000000..41c9ed8
+--- /dev/null
++++ b/src/main/java/com/deepnote/fx/FxUtil.java
+@@ -0,0 +1,132 @@
++package com.deepnote.fx;
++
++import javafx.application.Platform;
++import javafx.scene.Node;
++import javafx.scene.control.Label;
++import javafx.scene.shape.SVGPath;
++import javafx.scene.text.Text;
++import javafx.scene.text.TextFlow;
++
++import java.time.Duration;
++import java.time.Instant;
++import java.time.ZoneId;
++import java.time.ZonedDateTime;
++import java.time.format.DateTimeFormatter;
++import java.util.Locale;
++import java.util.concurrent.Callable;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.CompletionException;
++import java.util.function.Consumer;
++
++/** Small shared helpers for the JavaFX layer: async work, icons, time/metric formatting, match highlighting. */
++final class FxUtil {
++    // 16x16 stroke icons, styled by the .icon-path CSS class.
++    static final String SEARCH = "M7 12.5a5.5 5.5 0 1 1 0-11a5.5 5.5 0 0 1 0 11z M11 11l3.5 3.5";
++    static final String DOC = "M4 1.5h5.5L13 5v9.5H4z M9.5 1.5V5H13";
++    static final String PENCIL = "M11.5 2.5l2 2L5 13l-3 1l1-3z M10 4l2 2";
++    static final String TRASH = "M2.5 4.5h11 M6 4.5V3h4v1.5 M4 4.5l.7 8.5h6.6l.7-8.5 M6.8 7v4 M9.2 7v4";
++    static final String SAVE = "M8 2v7.5 M5 7l3 3l3-3 M2.5 10v3.5h11V10";
++
++    private FxUtil() { }
++
++    /** Runs blocking work off the FX thread, then delivers the result (or failure) on the FX thread. */
++    static <T> void async(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
++        CompletableFuture.supplyAsync(() -> {
++            try { return work.call(); } catch (Exception ex) { throw new CompletionException(ex); }
++        }).whenComplete((value, error) -> Platform.runLater(() -> {
++            if (error != null) {
++                Throwable cause = error;
++                while (cause instanceof CompletionException && cause.getCause() != null) cause = cause.getCause();
++                onFailure.accept(cause);
++            } else onSuccess.accept(value);
++        }));
++    }
++
++    static Node icon(String pathData) {
++        SVGPath path = new SVGPath();
++        path.setContent(pathData);
++        path.getStyleClass().add("icon-path");
++        return path;
++    }
++
++    static void show(Node node, boolean visible) { node.setVisible(visible); node.setManaged(visible); }
++
++    static void toggleClass(Node node, String styleClass, boolean on) {
++        node.getStyleClass().remove(styleClass);
++        if (on) node.getStyleClass().add(styleClass);
++    }
++
++    static long wordCount(String value) {
++        String trimmed = value == null ? "" : value.trim();
++        return trimmed.isEmpty() ? 0 : trimmed.split("\\s+").length;
++    }
++
++    static int readMinutes(long words) { return Math.max(1, Math.round(words / 200f)); }
++
++    static String relativeTime(Instant time) {
++        if (time == null || time.equals(Instant.EPOCH)) return "unknown";
++        Duration age = Duration.between(time, Instant.now());
++        long minutes = age.toMinutes();
++        if (minutes < 1) return "just now";
++        if (minutes < 60) return minutes + "m ago";
++        if (age.toHours() < 24) return age.toHours() + "h ago";
++        if (age.toDays() < 7) return age.toDays() + "d ago";
++        ZonedDateTime when = time.atZone(ZoneId.systemDefault());
++        boolean sameYear = when.getYear() == ZonedDateTime.now().getYear();
++        return when.format(DateTimeFormatter.ofPattern(sameYear ? "MMM d" : "MMM d, yyyy", Locale.ENGLISH));
++    }
++
++    static int indexOfIgnoreCase(String haystack, String needle, int from) {
++        int last = haystack.length() - needle.length();
++        for (int i = Math.max(0, from); i <= last; i++) if (haystack.regionMatches(true, i, needle, 0, needle.length())) return i;
++        return -1;
++    }
++
++    /** ~200 character excerpt of the note body, centred on the first match of the query. */
++    static String snippet(String content, String query) {
++        String flat = content == null ? "" : content.replaceAll("\\s+", " ").trim();
++        if (flat.isEmpty()) return "Empty note";
++        String q = query == null ? "" : query.trim();
++        int hit = q.isEmpty() ? -1 : indexOfIgnoreCase(flat, q, 0);
++        int start = hit < 0 ? 0 : Math.max(0, hit - 70);
++        int end = Math.min(flat.length(), start + 200);
++        return (start > 0 ? "…" : "") + flat.substring(start, end) + (end < flat.length() ? "…" : "");
++    }
++
++    /** Builds a TextFlow where every case-insensitive occurrence of {@code query} is shown as a highlighted chip. */
++    static TextFlow highlight(String text, String query, String textClass) {
++        TextFlow flow = new TextFlow();
++        flow.setMinWidth(0);
++        flow.setMaxWidth(Double.MAX_VALUE);
++        String q = query == null ? "" : query.trim();
++        int from = 0;
++        if (!q.isEmpty()) {
++            int hit;
++            while ((hit = indexOfIgnoreCase(text, q, from)) >= 0) {
++                if (hit > from) flow.getChildren().add(plain(text.substring(from, hit), textClass));
++                flow.getChildren().add(match(text.substring(hit, hit + q.length()), textClass, q.length() > 40));
++                from = hit + q.length();
++            }
++        }
++        if (from < text.length()) flow.getChildren().add(plain(text.substring(from), textClass));
++        return flow;
++    }
++
++    private static Node plain(String value, String textClass) {
++        Text text = new Text(value);
++        text.getStyleClass().addAll("flow-text", textClass);
++        return text;
++    }
++
++    private static Node match(String value, String textClass, boolean longMatch) {
++        if (longMatch) { // very long queries would not wrap inside a chip; fall back to coloured text
++            Text text = new Text(value);
++            text.getStyleClass().addAll("flow-text", textClass);
++            text.setStyle("-fx-fill: -tertiary; -fx-font-weight: bold;");
++            return text;
++        }
++        Label chip = new Label(value);
++        chip.getStyleClass().addAll("match-chip", textClass + "-hit");
++        return chip;
++    }
++}
+diff --git a/src/main/java/com/deepnote/fx/HomeViewController.java b/src/main/java/com/deepnote/fx/HomeViewController.java
+index 4d0a2b3..c0be1ca 100644
+--- a/src/main/java/com/deepnote/fx/HomeViewController.java
++++ b/src/main/java/com/deepnote/fx/HomeViewController.java
+@@ -2,56 +2,276 @@ package com.deepnote.fx;
+ 
+ import com.deepnote.model.Note;
+ import com.deepnote.service.LocalSearchService;
++import javafx.application.Platform;
+ import javafx.fxml.FXML;
+-import javafx.geometry.Insets;
++import javafx.geometry.Bounds;
++import javafx.geometry.Pos;
++import javafx.scene.Cursor;
+ import javafx.scene.Node;
+ import javafx.scene.control.*;
++import javafx.scene.input.KeyEvent;
+ import javafx.scene.layout.*;
+-import javafx.beans.binding.Bindings;
++import javafx.scene.text.TextFlow;
+ 
+-import java.util.List;
++import java.nio.file.Path;
++import java.time.Instant;
++import java.time.LocalTime;
++import java.time.temporal.ChronoUnit;
++import java.util.*;
+ import java.util.function.Consumer;
+ 
+-/** FXML-backed Home tab: local search and live TXT note collections. */
++/** Home tab: greeting + responsive note grid (browse state) and a dedicated keyboard-driven search view. */
+ public final class HomeViewController {
+-    @FXML private VBox root, collections;
++    private static final double GAP = 16;
++
++    @FXML private VBox root, body, collections;
++    @FXML private HBox headerRow, searchBar, controlsRow;
++    @FXML private Label greetingLabel, countLabel, shortcutBadge;
++    @FXML private StackPane searchIcon;
+     @FXML private TextField searchField;
++    @FXML private Button newNoteButton, clearButton;
++    @FXML private ScrollPane scroll;
++    @FXML private ComboBox<String> sortBox;
+     @FXML private ToggleButton gridButton, listButton;
+-    @FXML private Button newNoteButton;
++
+     private final LocalSearchService searchService = new LocalSearchService();
+-    private List<Note> notes = List.of();
++    private final List<FlowPane> grids = new ArrayList<>();
++    private final List<Region> resultCards = new ArrayList<>();
++    private List<NoteItem> items = List.of();
++    private Map<Path, NoteItem> byPath = Map.of();
++    private List<NoteItem> results = List.of();
++    private boolean recentOnly;
++    private int selected;
++    private double searchMillis;
+     private Consumer<Note> openNote = note -> { };
+     private Runnable createNote = () -> { };
++    private Runnable stateListener = () -> { };
+ 
+     @FXML private void initialize() {
+-        ToggleGroup group = new ToggleGroup(); gridButton.setToggleGroup(group); listButton.setToggleGroup(group); gridButton.setSelected(true);
+-        searchField.textProperty().addListener((o, old, value) -> render());
+-        gridButton.setOnAction(e -> render()); listButton.setOnAction(e -> render()); newNoteButton.setOnAction(e -> createNote.run());
++        greetingLabel.setText(greeting());
++        searchIcon.getChildren().add(FxUtil.icon(FxUtil.SEARCH));
++        sortBox.getItems().addAll("Last Modified", "Title", "Words");
++        sortBox.getSelectionModel().selectFirst();
++        sortBox.setOnAction(e -> render());
++
++        ToggleGroup layout = new ToggleGroup();
++        gridButton.setToggleGroup(layout); listButton.setToggleGroup(layout); gridButton.setSelected(true);
++        keepOneSelected(layout);
++        gridButton.setOnAction(e -> render()); listButton.setOnAction(e -> render());
++
++        newNoteButton.setOnAction(e -> createNote.run());
++        clearButton.setOnAction(e -> clearSearch());
++        searchField.textProperty().addListener((o, old, value) -> { selected = 0; render(); });
++        searchField.focusedProperty().addListener((o, old, focused) -> FxUtil.toggleClass(searchBar, "focused", focused));
++        scroll.viewportBoundsProperty().addListener((o, old, bounds) -> applyLayout());
++        root.addEventFilter(KeyEvent.KEY_PRESSED, this::onKey);
++        render();
++    }
++
++    public void setNotes(List<NoteItem> value) {
++        items = List.copyOf(value);
++        Map<Path, NoteItem> index = new HashMap<>();
++        items.forEach(item -> index.put(item.note().path(), item));
++        byPath = index;
++        render();
+     }
+-    public void setNotes(List<Note> value) { notes = List.copyOf(value); render(); }
+     public void setOpenNote(Consumer<Note> callback) { openNote = callback; }
+     public void setCreateNote(Runnable callback) { createNote = callback; }
+-    public TextField searchField() { return searchField; }
++    public void setStateListener(Runnable callback) { stateListener = callback; }
++    public void focusSearch() { Platform.runLater(() -> { searchField.requestFocus(); searchField.selectAll(); }); }
++
++    /** {left, right} text for the global bottom status bar. */
++    public String[] status() {
++        if (isSearching()) return new String[] {
++                "↑ ↓ Navigate  •  ↵ Open result  •  ESC Reset search",
++                "Indexed: " + items.size() + " notes  •  Search time: " + String.format(Locale.ROOT, "%.1f", searchMillis) + "ms" };
++        return new String[] { "● Local Workspace  |  " + items.size() + " notes", "Shortcuts: Ctrl+N New • Ctrl+K Search" };
++    }
++
++    private boolean isSearching() { return !searchField.getText().isBlank(); }
++    private boolean listMode() { return listButton.isSelected(); }
++
++    private static String greeting() {
++        int hour = LocalTime.now().getHour();
++        return (hour < 12 ? "Good Morning" : hour < 18 ? "Good Afternoon" : "Good Evening") + " 👋";
++    }
++    private static void keepOneSelected(ToggleGroup group) {
++        group.selectedToggleProperty().addListener((o, old, now) -> { if (now == null && old != null) old.setSelected(true); });
++    }
++
++    // ---------------------------------------------------------------- rendering
+ 
+     private void render() {
+-        List<Note> filtered = searchService.search(notes, searchField.getText()); collections.getChildren().clear();
+-        if (filtered.isEmpty()) { Label empty = new Label(searchField.getText().isBlank() ? "No notes yet. Create your first note to get started." : "No notes match that search. Try another title or keyword."); empty.getStyleClass().add("empty-state"); collections.getChildren().add(empty); return; }
+-        boolean listMode = listButton.isSelected();
+-        if (filtered.size() > 3 && searchField.getText().isBlank()) collections.getChildren().add(section("RECENTS", filtered.subList(0, 3), listMode));
+-        collections.getChildren().add(section(searchField.getText().isBlank() ? "NOTES  ·  " + filtered.size() : "SEARCH RESULTS  ·  " + filtered.size(), filtered, listMode));
+-    }
+-    private VBox section(String label, List<Note> items, boolean listMode) {
+-        Label heading = new Label(label); heading.getStyleClass().add("section-label"); FlowPane cards = new FlowPane(14, 14); cards.getStyleClass().add(listMode ? "note-list" : "note-grid");
+-        items.forEach(note -> cards.getChildren().add(card(note, listMode))); VBox box = new VBox(12, heading, cards); VBox.setMargin(box, new Insets(0, 0, 4, 0)); return box;
+-    }
+-    private Node card(Note note, boolean listMode) {
+-        VBox card = new VBox(9); card.getStyleClass().add("note-card"); if (listMode) card.getStyleClass().add("list-card");
+-        Label tag = new Label("TXT  ·  NOTE"); tag.getStyleClass().add("card-tag"); Label title = new Label(note.title()); title.getStyleClass().add("card-title");
+-        String preview = note.content().replaceAll("\\s+", " ").trim(); Label body = new Label(preview.isBlank() ? "Empty note" : preview); body.setWrapText(true); body.setMaxHeight(48); body.getStyleClass().add("card-preview");
+-        Label meta = new Label(wordCount(note.content()) + " words"); meta.getStyleClass().add("mono-label"); card.getChildren().addAll(tag, title, body, meta);
+-        if (listMode) card.prefWidthProperty().bind(root.widthProperty().subtract(72));
+-        else card.prefWidthProperty().bind(Bindings.max(220, Bindings.min(380, root.widthProperty().subtract(100).divide(3))));
+-        card.setOnMouseClicked(e -> openNote.accept(note)); return card;
+-    }
+-    private long wordCount(String value) { return java.util.Arrays.stream(value.trim().split("\\s+")).filter(s -> !s.isBlank()).count(); }
++        boolean searching = isSearching();
++        FxUtil.show(headerRow, !searching);
++        FxUtil.show(controlsRow, !searching);
++        FxUtil.show(clearButton, searching);
++        FxUtil.toggleClass(searchBar, "active", searching);
++        shortcutBadge.setText(searching ? "ESC" : "Ctrl+K");
++        collections.getChildren().clear(); grids.clear(); resultCards.clear();
++        if (searching) renderSearch(); else renderBrowse();
++        applyLayout();
++        stateListener.run();
++    }
++
++    private void renderBrowse() {
++        countLabel.setText(items.size() + (items.size() == 1 ? " note" : " notes"));
++        if (items.isEmpty()) { collections.getChildren().add(empty("No notes yet. Create your first note to get started.")); return; }
++        if (items.size() > 3) {
++            List<NoteItem> recent = items.stream().sorted(Comparator.comparing(NoteItem::modified).reversed()).limit(3).toList();
++            collections.getChildren().add(section("RECENTS", recent));
++        }
++        collections.getChildren().add(section("NOTES (" + items.size() + " total)", sorted(items)));
++    }
++
++    private List<NoteItem> sorted(List<NoteItem> source) {
++        Comparator<NoteItem> order = switch (String.valueOf(sortBox.getValue())) {
++            case "Title" -> Comparator.comparing(item -> item.note().title().toLowerCase(Locale.ROOT));
++            case "Words" -> Comparator.comparingLong(NoteItem::words).reversed();
++            default -> Comparator.comparing(NoteItem::modified).reversed();
++        };
++        return source.stream().sorted(order).toList();
++    }
++
++    private VBox section(String label, List<NoteItem> list) {
++        Label heading = new Label(label); heading.getStyleClass().add("section-label");
++        FlowPane grid = new FlowPane(GAP, GAP); grids.add(grid);
++        list.forEach(item -> grid.getChildren().add(card(item)));
++        return new VBox(12, heading, grid);
++    }
++
++    private Region card(NoteItem item) {
++        Label badge = new Label(".TXT"); badge.getStyleClass().add("txt-badge");
++        Label time = new Label(FxUtil.relativeTime(item.modified())); time.getStyleClass().add("mono-label");
++        HBox top = new HBox(8, badge, spacer(), time); top.setAlignment(Pos.CENTER_LEFT);
++
++        Label title = new Label(item.note().title()); title.getStyleClass().add("card-title"); title.setMaxWidth(Double.MAX_VALUE);
++        String flat = item.note().content().replaceAll("\\s+", " ").trim();
++        Label preview = new Label(flat.isBlank() ? "Empty note" : flat);
++        preview.getStyleClass().add("card-preview"); preview.setWrapText(true); preview.setMaxWidth(Double.MAX_VALUE);
++        preview.setMinHeight(54); preview.setPrefHeight(54); preview.setMaxHeight(54); preview.setAlignment(Pos.TOP_LEFT);
++        VBox.setVgrow(preview, Priority.ALWAYS);
++
++        Label words = new Label(item.words() + " words"); words.getStyleClass().add("mono-label");
++        Label read = new Label(item.minutesToRead() + " min read"); read.getStyleClass().add("read-badge");
++        HBox footer = new HBox(8, words, spacer(), read); footer.setAlignment(Pos.CENTER_LEFT);
++
++        VBox card = new VBox(10, top, title, preview, divider(), footer);
++        card.getStyleClass().add("note-card"); card.setCursor(Cursor.HAND);
++        card.setOnMouseClicked(e -> openNote.accept(item.note()));
++        return card;
++    }
++
++    private void renderSearch() {
++        String query = searchField.getText().trim();
++        List<Note> all = items.stream().map(NoteItem::note).toList();
++        long started = System.nanoTime();
++        List<Note> matched = searchService.search(all, query);
++        searchMillis = (System.nanoTime() - started) / 1_000_000.0;
++
++        Instant cutoff = Instant.now().minus(7, ChronoUnit.DAYS);
++        results = matched.stream().map(note -> byPath.get(note.path())).filter(Objects::nonNull)
++                .filter(item -> !recentOnly || item.modified().isAfter(cutoff)).toList();
++        if (selected >= results.size()) selected = Math.max(0, results.size() - 1);
++
++        collections.getChildren().add(searchHeader());
++        if (results.isEmpty()) { collections.getChildren().add(empty("No notes match that search. Try another title or keyword.")); return; }
++        VBox list = new VBox(14);
++        for (NoteItem item : results) { Region card = resultCard(item, query); resultCards.add(card); list.getChildren().add(card); }
++        collections.getChildren().add(list);
++        applySelection();
++    }
++
++    private Node searchHeader() {
++        Label heading = new Label("Search results:"); heading.getStyleClass().add("search-heading");
++        Label count = new Label(results.size() + (results.size() == 1 ? " match" : " matches")); count.getStyleClass().add("count-badge");
++        Label filterLabel = new Label("FILTER:"); filterLabel.getStyleClass().add("mono-label");
++        ToggleGroup group = new ToggleGroup();
++        ToggleButton all = new ToggleButton("All Notes"), recent = new ToggleButton("Recent Only");
++        all.setToggleGroup(group); recent.setToggleGroup(group); (recentOnly ? recent : all).setSelected(true);
++        keepOneSelected(group);
++        all.setOnAction(e -> { recentOnly = false; selected = 0; render(); });
++        recent.setOnAction(e -> { recentOnly = true; selected = 0; render(); });
++        HBox pills = new HBox(all, recent); pills.getStyleClass().add("segmented"); pills.setAlignment(Pos.CENTER);
++        HBox row = new HBox(10, heading, count, spacer(), filterLabel, pills); row.setAlignment(Pos.CENTER_LEFT);
++        return row;
++    }
++
++    private Region resultCard(NoteItem item, String query) {
++        StackPane badge = new StackPane(FxUtil.icon(FxUtil.DOC)); badge.getStyleClass().add("icon-badge");
++        badge.setMinSize(26, 26); badge.setPrefSize(26, 26); badge.setMaxSize(26, 26);
++        TextFlow title = FxUtil.highlight(item.note().title(), query, "title-text");
++        Label time = new Label("Updated " + FxUtil.relativeTime(item.modified())); time.getStyleClass().add("mono-label");
++        HBox top = new HBox(10, badge, title, time); top.setAlignment(Pos.CENTER_LEFT); HBox.setHgrow(title, Priority.ALWAYS);
++
++        TextFlow snippet = FxUtil.highlight(FxUtil.snippet(item.note().content(), query), query, "snippet-text");
++        Label meta = new Label("📖 " + item.words() + " words   •   " + item.minutesToRead() + " min read   •   " + item.characters() + " characters");
++        meta.getStyleClass().add("meta-text");
++
++        VBox card = new VBox(12, top, snippet, divider(), meta);
++        card.getStyleClass().add("result-card"); card.setCursor(Cursor.HAND);
++        card.setOnMouseClicked(e -> openNote.accept(item.note()));
++        return card;
++    }
++
++    // ---------------------------------------------------------------- responsive grid
++
++    /** 3 columns at >=1020px, 2 at 660-1019px, 1 below (or in list mode); card width fills the row exactly. */
++    private void applyLayout() {
++        double available = Math.floor(scroll.getViewportBounds().getWidth());
++        if (available <= 0) return;
++        int columns = listMode() ? 1 : available >= 1020 ? 3 : available >= 660 ? 2 : 1;
++        double width = Math.floor((available - GAP * (columns - 1)) / columns);
++        for (FlowPane grid : grids) {
++            grid.setPrefWrapLength(available);
++            for (Node child : grid.getChildren()) {
++                Region card = (Region) child;
++                card.setMinWidth(width); card.setPrefWidth(width); card.setMaxWidth(width);
++            }
++        }
++    }
++
++    // ---------------------------------------------------------------- keyboard & selection
++
++    private void onKey(KeyEvent event) {
++        if (!isSearching()) return;
++        switch (event.getCode()) {
++            case DOWN -> { move(1); event.consume(); }
++            case UP -> { move(-1); event.consume(); }
++            case ESCAPE -> { clearSearch(); event.consume(); }
++            case ENTER -> {
++                if (event.getTarget() == searchField && !results.isEmpty()) { openNote.accept(results.get(selected).note()); event.consume(); }
++            }
++            default -> { }
++        }
++    }
++
++    private void move(int delta) {
++        if (results.isEmpty()) return;
++        selected = Math.max(0, Math.min(results.size() - 1, selected + delta));
++        applySelection();
++        ensureVisible(resultCards.get(selected));
++    }
++
++    private void applySelection() {
++        for (int i = 0; i < resultCards.size(); i++) FxUtil.toggleClass(resultCards.get(i), "selected", i == selected);
++    }
++
++    private void ensureVisible(Node node) {
++        if (node.getScene() == null) return;
++        Bounds target = body.sceneToLocal(node.localToScene(node.getBoundsInLocal()));
++        double view = scroll.getViewportBounds().getHeight(), range = body.getHeight() - view;
++        if (target == null || range <= 0) return;
++        double top = scroll.getVvalue() * range;
++        if (target.getMinY() < top) scroll.setVvalue(Math.max(0, (target.getMinY() - 8) / range));
++        else if (target.getMaxY() > top + view) scroll.setVvalue(Math.min(1, (target.getMaxY() + 8 - view) / range));
++    }
++
++    private void clearSearch() { recentOnly = false; searchField.clear(); searchField.requestFocus(); }
++
++    // ---------------------------------------------------------------- small builders
++
++    private static Region spacer() { Region r = new Region(); HBox.setHgrow(r, Priority.ALWAYS); return r; }
++    private static Region divider() { Region r = new Region(); r.getStyleClass().add("card-divider"); return r; }
++    private static Label empty(String text) { Label l = new Label(text); l.getStyleClass().add("empty-state"); return l; }
+ }
+diff --git a/src/main/java/com/deepnote/fx/NoteItem.java b/src/main/java/com/deepnote/fx/NoteItem.java
+new file mode 100644
+index 0000000..86776d4
+--- /dev/null
++++ b/src/main/java/com/deepnote/fx/NoteItem.java
+@@ -0,0 +1,18 @@
++package com.deepnote.fx;
++
++import com.deepnote.model.Note;
++
++import java.io.IOException;
++import java.nio.file.Files;
++import java.time.Instant;
++
++/** UI-side view of a {@link Note} with metrics derived from real file data. Build off the FX thread. */
++record NoteItem(Note note, Instant modified, long words, int characters, int minutesToRead) {
++    static NoteItem of(Note note) {
++        Instant modified;
++        try { modified = Files.getLastModifiedTime(note.path()).toInstant(); }
++        catch (IOException | RuntimeException ex) { modified = Instant.EPOCH; }
++        long words = FxUtil.wordCount(note.content());
++        return new NoteItem(note, modified, words, note.content().length(), FxUtil.readMinutes(words));
++    }
++}
+diff --git a/src/main/resources/com/deepnote/fx/assistant-panel.fxml b/src/main/resources/com/deepnote/fx/assistant-panel.fxml
+index 11a3d74..440727c 100644
+--- a/src/main/resources/com/deepnote/fx/assistant-panel.fxml
++++ b/src/main/resources/com/deepnote/fx/assistant-panel.fxml
+@@ -1,10 +1,40 @@
+ <?xml version="1.0" encoding="UTF-8"?>
++<?import javafx.geometry.Insets?>
+ <?import javafx.scene.control.*?>
+ <?import javafx.scene.layout.*?>
+-<VBox xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.AssistantPanelController" spacing="12" styleClass="ai-panel">
+-    <HBox alignment="CENTER_LEFT" spacing="8" styleClass="ai-header"><VBox><Label text="DeepNote AI" styleClass="panel-title"/><Label fx:id="statusLabel" styleClass="mono-label"/></VBox><Region HBox.hgrow="ALWAYS"/><Button fx:id="clearButton" text="Clear" styleClass="text-button"/><Button fx:id="closeButton" text="×" styleClass="icon-button"/></HBox>
+-    <VBox fx:id="welcome" spacing="8" styleClass="ai-welcome"><Label text="Chat with this note" styleClass="panel-title"/><Label text="Questions use the current editor content and stay local to this session." wrapText="true" styleClass="card-preview"/><FlowPane fx:id="suggestions" hgap="6" vgap="6"/></VBox>
+-    <ListView fx:id="messages" VBox.vgrow="ALWAYS" styleClass="message-list"/>
+-    <Label fx:id="thinkingLabel" text="" styleClass="ai-status"/>
+-    <HBox spacing="8" alignment="BOTTOM_RIGHT"><TextArea fx:id="composer" promptText="Ask about this note…" prefRowCount="3" wrapText="true" styleClass="composer" HBox.hgrow="ALWAYS"/><Button fx:id="sendButton" text="Send" styleClass="primary-button"/></HBox>
++<VBox xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.AssistantPanelController" prefWidth="360.0" minWidth="310.0" styleClass="ai-panel">
++    <HBox alignment="CENTER_LEFT" styleClass="ai-header">
++        <StackPane styleClass="ai-badge"><Label text="✦" styleClass="ai-badge-text"/></StackPane>
++        <VBox spacing="2" HBox.hgrow="ALWAYS" minWidth="0">
++            <HBox alignment="CENTER_LEFT" spacing="8">
++                <Label text="DeepNote AI" styleClass="panel-title"/>
++                <Label fx:id="modelPill" styleClass="model-pill"/>
++            </HBox>
++            <Label fx:id="statusLabel" text="● Checking…" styleClass="status-offline"/>
++        </VBox>
++        <Button fx:id="clearButton" text="↻" styleClass="icon-button" focusTraversable="false"/>
++        <Button fx:id="closeButton" text="◫" styleClass="icon-button" focusTraversable="false"/>
++    </HBox>
++    <ScrollPane fx:id="scroll" fitToWidth="true" hbarPolicy="NEVER" styleClass="chat-scroll" VBox.vgrow="ALWAYS">
++        <content>
++            <VBox fx:id="messageBox" styleClass="chat-box">
++                <VBox fx:id="welcome" spacing="8" styleClass="ai-welcome">
++                    <Label text="Chat with this note" styleClass="panel-title"/>
++                    <Label text="Questions use the current editor content and stay local to this session." wrapText="true" styleClass="card-preview"/>
++                    <VBox fx:id="suggestions" spacing="6"/>
++                </VBox>
++            </VBox>
++        </content>
++    </ScrollPane>
++    <VBox spacing="0">
++        <padding><Insets top="8" right="14" bottom="14" left="14"/></padding>
++        <VBox fx:id="composerBox" styleClass="composer-box">
++            <TextArea fx:id="composerInput" promptText="Ask about this note..." prefRowCount="2" wrapText="true" styleClass="composer-input"/>
++            <HBox alignment="CENTER_LEFT" spacing="8">
++                <Label fx:id="contextPill" styleClass="context-pill" maxWidth="220"/>
++                <Region HBox.hgrow="ALWAYS"/>
++                <Button fx:id="sendButton" text="↑" styleClass="send-button"/>
++            </HBox>
++        </VBox>
++    </VBox>
+ </VBox>
+diff --git a/src/main/resources/com/deepnote/fx/editor-view.fxml b/src/main/resources/com/deepnote/fx/editor-view.fxml
+index 8173eab..521c958 100644
+--- a/src/main/resources/com/deepnote/fx/editor-view.fxml
++++ b/src/main/resources/com/deepnote/fx/editor-view.fxml
+@@ -1,9 +1,27 @@
+ <?xml version="1.0" encoding="UTF-8"?>
++<?import javafx.geometry.Insets?>
+ <?import javafx.scene.control.*?>
+ <?import javafx.scene.layout.*?>
+-<BorderPane xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.EditorViewController" styleClass="editor-view">
+-    <top><VBox spacing="12" styleClass="editor-header">
+-        <HBox alignment="CENTER_LEFT" spacing="12"><VBox spacing="5"><Label fx:id="titleLabel" styleClass="editor-title"/><Label fx:id="metadataLabel" styleClass="editor-meta"/></VBox><Region HBox.hgrow="ALWAYS"/><HBox fx:id="actions" spacing="8" alignment="CENTER_RIGHT"/></HBox>
+-    </VBox></top>
+-    <center><ScrollPane fx:id="editorScroll" fitToWidth="true" fitToHeight="true" hbarPolicy="NEVER"><content><TextArea fx:id="editor" wrapText="true" styleClass="note-editor"/></content></ScrollPane></center>
++<BorderPane xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.EditorViewController" fx:id="root" styleClass="editor-view">
++    <center>
++        <HBox alignment="TOP_CENTER" styleClass="editor-canvas">
++            <VBox spacing="16" maxWidth="920.0" HBox.hgrow="ALWAYS" styleClass="editor-column">
++                <padding><Insets top="36" right="48" bottom="24" left="48"/></padding>
++                <HBox alignment="TOP_LEFT" spacing="16">
++                    <VBox spacing="8" HBox.hgrow="ALWAYS" minWidth="0">
++                        <Label fx:id="titleLabel" styleClass="editor-title" wrapText="true" maxWidth="Infinity"/>
++                        <Label fx:id="metadataLabel" styleClass="editor-meta"/>
++                    </VBox>
++                    <HBox fx:id="actions" alignment="CENTER_RIGHT" spacing="8">
++                        <Button fx:id="renameButton" styleClass="icon-square"/>
++                        <Button fx:id="deleteButton" styleClass="icon-square"/>
++                        <Button fx:id="saveButton" styleClass="icon-square"/>
++                        <Button fx:id="askButton" text="✦ Ask DeepNote" styleClass="ask-button"/>
++                    </HBox>
++                </HBox>
++                <Region styleClass="divider-line"/>
++                <TextArea fx:id="contentArea" wrapText="true" styleClass="note-editor" VBox.vgrow="ALWAYS"/>
++            </VBox>
++        </HBox>
++    </center>
+ </BorderPane>
+diff --git a/src/main/resources/com/deepnote/fx/foundation.css b/src/main/resources/com/deepnote/fx/foundation.css
+index 19e23c9..b33e628 100644
+--- a/src/main/resources/com/deepnote/fx/foundation.css
++++ b/src/main/resources/com/deepnote/fx/foundation.css
+@@ -1,55 +1,267 @@
++/* ==========================================================================
++   DeepNote — foundation.css
++   Palette: single blue accent family.
++   ========================================================================== */
+ .root {
++    /* custom tokens */
+     -primary: #4C8DFF; -secondary: #8AB4FF; -tertiary: #A6C8FF;
+-    -background: #0D0F12; -surface: #1B1D22; -border: #30343D;
++    -background: #0D0F12; -surface: #1B1D22; -surface-hover: #22252B; -surface-raised: #202329;
++    -border: #30343D; -border-subtle: #252932;
+     -text-primary: #F1F3F6; -text-muted: #969DA9;
+     -success: #34D399; -warning: #FBBF24; -danger: #F87171;
+-    -surface-hover: #22252B; -border-subtle: #252932;
++    -primary-subtle: rgba(76, 141, 255, 0.15);
++    -primary-glow: rgba(76, 141, 255, 0.22);
++    -primary-selection: rgba(76, 141, 255, 0.30);
++
++    /* AtlantaFX PrimerDark overrides */
++    -fx-accent: #4C8DFF; -fx-focus-color: #4C8DFF; -fx-faint-focus-color: transparent;
++    -fx-selection-bar: #4C8DFF; -fx-selection-bar-non-focused: #4C8DFF;
++    -color-accent-emphasis: #4C8DFF; -color-accent-fg: #4C8DFF;
++    -color-accent-muted: rgba(76, 141, 255, 0.40);
++    -color-accent-subtle: rgba(76, 141, 255, 0.15);
++    -color-bg-default: #0D0F12; -color-bg-subtle: #1B1D22; -color-bg-inset: #0D0F12; -color-bg-overlay: #1B1D22;
++    -color-border-default: #30343D; -color-border-muted: #252932;
++    -color-fg-default: #F1F3F6; -color-fg-muted: #969DA9; -color-fg-emphasis: #F1F3F6;
++
+     -fx-font-family: "Inter", "Segoe UI", sans-serif;
+     -fx-background-color: -background; -fx-text-fill: -text-primary;
+-    -fx-focus-color: -primary; -fx-faint-focus-color: transparent;
+-    -fx-accent: -primary; -fx-selection-bar: -primary; -fx-selection-bar-non-focused: -primary;
+-}
+-.app-root, .home-page, .editor-view, .editor-column { -fx-background-color: -background; }
+-.app-header { -fx-min-height: 42; -fx-padding: 0 24; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0; }
+-.brand { -fx-text-fill: -text-primary; -fx-font-size: 14px; -fx-font-weight: bold; }
+-.mono-label, .status-line, .section-label, .card-tag { -fx-font-family: "JetBrains Mono", "Consolas", monospace; -fx-font-size: 10px; -fx-text-fill: -text-muted; }
+-.tab-bar { -fx-padding: 0 18; -fx-background-color: -background; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0; }
+-.workspace-tabs, .workspace-tabs .tab-header-area, .tab-bar .tab-pane, .tab-bar .tab-pane .tab-header-area { -fx-background-color: transparent; }
+-.tab-bar .tab { -fx-background-color: transparent; -fx-padding: 11 16; }
+-.tab-bar .tab:selected { -fx-background-color: -surface; -fx-border-color: -primary; -fx-border-width: 0 0 2 0; }
+-.tab-bar .tab-label { -fx-text-fill: -text-muted; -fx-font-size: 13px; }
+-.tab-bar .tab:selected .tab-label { -fx-text-fill: -text-primary; }
+-.status-line { -fx-padding: 7 24; -fx-border-color: -border-subtle; -fx-border-width: 1 0 0 0; }
+-.home-page { -fx-padding: 32 40 40 40; }
+-.page-title { -fx-text-fill: -text-primary; -fx-font-size: 34px; -fx-font-weight: bold; }
+-.search-field, .composer { -fx-min-height: 46; -fx-background-color: -surface; -fx-text-fill: -text-primary; -fx-prompt-text-fill: -text-muted; -fx-border-color: -border; -fx-border-radius: 9; -fx-background-radius: 9; -fx-padding: 11 14; }
+-.primary-button { -fx-background-color: -primary; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 8; -fx-padding: 10 15; }
++}
++.label { -fx-text-fill: -text-primary; }
++.app-root, .home-page, .editor-view, .editor-canvas, .workspace { -fx-background-color: -background; }
++
++/* ---------- typography helpers ---------- */
++.mono-label, .status-text, .status-pill, .section-label, .txt-badge, .read-badge, .count-badge,
++.key-badge, .context-pill, .model-pill, .status-online, .status-offline, .meta-text {
++    -fx-font-family: "JetBrains Mono", "Consolas", monospace;
++}
++.mono-label { -fx-font-size: 11px; -fx-text-fill: -text-muted; }
++
++/* ---------- shared scroll / scrollbars ---------- */
++.scroll-pane, .scroll-pane > .viewport, .page-scroll, .page-scroll > .viewport, .chat-scroll, .chat-scroll > .viewport {
++    -fx-background-color: transparent; -fx-background-insets: 0; -fx-padding: 0; -fx-border-color: transparent;
++}
++.scroll-bar:vertical, .scroll-bar:horizontal { -fx-background-color: transparent; }
++.scroll-bar:vertical { -fx-pref-width: 8; }
++.scroll-bar .thumb { -fx-background-color: -border; -fx-background-radius: 5; -fx-background-insets: 0; }
++.scroll-bar .track, .scroll-bar .increment-button, .scroll-bar .decrement-button { -fx-background-color: transparent; -fx-padding: 0; }
++.scroll-bar .increment-arrow, .scroll-bar .decrement-arrow { -fx-padding: 0; -fx-shape: ""; }
++
++/* ---------- icons ---------- */
++.icon-path { -fx-fill: transparent; -fx-stroke: -text-primary; -fx-stroke-width: 1.5; -fx-stroke-line-cap: round; -fx-stroke-line-join: round; }
++
++/* ---------- buttons ---------- */
++.primary-button {
++    -fx-background-color: -primary; -fx-background-insets: 0; -fx-background-radius: 8; -fx-border-color: transparent;
++    -fx-text-fill: -text-primary; -fx-font-weight: bold; -fx-padding: 9 16; -fx-cursor: hand;
++}
+ .primary-button:hover { -fx-background-color: -secondary; }
+-.primary-button:focused, .secondary-button:focused, .text-button:focused, .icon-button:focused, .view-toggle:focused, .search-field:focused, .composer:focused { -fx-border-color: -primary; -fx-border-width: 1; }
+-.secondary-button, .text-button, .icon-button, .view-toggle, .suggestion-button { -fx-background-color: -surface; -fx-text-fill: -text-primary; -fx-border-color: -border; -fx-border-radius: 7; -fx-background-radius: 7; -fx-padding: 9 12; }
+-.secondary-button:hover, .text-button:hover, .icon-button:hover, .suggestion-button:hover { -fx-background-color: -surface-hover; -fx-border-color: -secondary; }
+-.danger-button { -fx-background-color: -surface; -fx-text-fill: -danger; -fx-border-color: -border; -fx-border-radius: 7; -fx-background-radius: 7; -fx-padding: 9 12; }
+-.icon-button { -fx-padding: 8 11; }
+-.view-toggle:selected { -fx-background-color: -primary; -fx-text-fill: white; -fx-border-color: -primary; }
+-.section-label { -fx-font-weight: bold; }
+-.note-card { -fx-background-color: -surface; -fx-border-color: -border-subtle; -fx-border-radius: 11; -fx-background-radius: 11; -fx-padding: 17; -fx-min-height: 150; }
+-.note-card:hover { -fx-background-color: -surface-hover; -fx-border-color: -secondary; }
+-.card-tag { -fx-text-fill: -secondary; }
+-.card-title, .panel-title { -fx-text-fill: -text-primary; -fx-font-size: 16px; -fx-font-weight: bold; }
+-.card-preview, .editor-meta, .empty-state { -fx-text-fill: -text-muted; -fx-font-size: 12px; }
+-.editor-header { -fx-padding: 30 40 20 40; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0; }
++.primary-button:focused { -fx-background-color: -primary; -fx-border-color: -tertiary; -fx-border-radius: 8; }
++.ask-button {
++    -fx-background-color: -primary; -fx-background-insets: 0; -fx-background-radius: 8; -fx-border-color: transparent;
++    -fx-text-fill: -text-primary; -fx-font-weight: bold; -fx-font-size: 13px;
++    -fx-min-height: 36; -fx-pref-height: 36; -fx-max-height: 36; -fx-padding: 0 16; -fx-cursor: hand;
++}
++.ask-button:hover { -fx-background-color: -secondary; }
++
++.icon-square {
++    -fx-min-width: 36; -fx-pref-width: 36; -fx-max-width: 36; -fx-min-height: 36; -fx-pref-height: 36; -fx-max-height: 36;
++    -fx-padding: 0; -fx-background-color: -surface; -fx-background-insets: 0; -fx-background-radius: 8;
++    -fx-border-color: -border; -fx-border-radius: 8; -fx-cursor: hand;
++}
++.icon-square:hover { -fx-background-color: -surface-hover; -fx-border-color: -secondary; }
++.icon-square.danger:hover { -fx-border-color: -danger; }
++.icon-square.danger:hover .icon-path { -fx-stroke: -danger; }
++.icon-square.dirty { -fx-border-color: -primary; }
++.icon-square.dirty .icon-path { -fx-stroke: -primary; }
++.icon-square:focused { -fx-border-color: -primary; }
++
++.icon-button {
++    -fx-min-width: 28; -fx-pref-width: 28; -fx-max-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-max-height: 28;
++    -fx-padding: 0; -fx-background-color: transparent; -fx-background-insets: 0; -fx-background-radius: 7;
++    -fx-text-fill: -text-muted; -fx-font-size: 15px; -fx-cursor: hand;
++}
++.icon-button:hover { -fx-background-color: -surface-raised; -fx-text-fill: -text-primary; }
++
++.suggestion-button, .copy-button {
++    -fx-background-color: -surface-raised; -fx-background-insets: 0; -fx-background-radius: 8;
++    -fx-border-color: -border; -fx-border-radius: 8; -fx-text-fill: -text-primary; -fx-font-size: 12px;
++    -fx-padding: 6 10; -fx-cursor: hand;
++}
++.suggestion-button:hover, .copy-button:hover { -fx-background-color: -surface-hover; -fx-border-color: -primary; }
++.suggestion-button { -fx-alignment: CENTER_LEFT; }
++
++/* ---------- top bar & tab strip ---------- */
++.top-bar {
++    -fx-min-height: 42; -fx-pref-height: 42; -fx-max-height: 42; -fx-padding: 0 12 0 10; -fx-spacing: 12;
++    -fx-background-color: -background; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0;
++}
++.tab-pill {
++    -fx-min-height: 32; -fx-pref-height: 32; -fx-max-height: 32; -fx-padding: 0 6 0 12;
++    -fx-background-color: transparent; -fx-background-radius: 8;
++    -fx-border-color: transparent; -fx-border-width: 1 1 2 1; -fx-border-radius: 8; -fx-cursor: hand;
++}
++.tab-pill:hover { -fx-background-color: -surface-hover; }
++.tab-pill.active { -fx-background-color: -surface; -fx-border-color: -border -border -primary -border; }
++.tab-title { -fx-text-fill: -text-muted; -fx-font-size: 13px; }
++.tab-pill.active .tab-title { -fx-text-fill: -text-primary; }
++.tab-close {
++    -fx-min-width: 18; -fx-pref-width: 18; -fx-min-height: 18; -fx-pref-height: 18; -fx-padding: 0;
++    -fx-background-color: transparent; -fx-background-insets: 0; -fx-background-radius: 5;
++    -fx-text-fill: -text-muted; -fx-font-size: 14px; -fx-cursor: hand;
++}
++.tab-close:hover { -fx-background-color: -surface-raised; -fx-text-fill: -text-primary; }
++.tab-add {
++    -fx-min-width: 28; -fx-pref-width: 28; -fx-max-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-max-height: 28;
++    -fx-padding: 0; -fx-background-color: -surface; -fx-background-insets: 0; -fx-background-radius: 8;
++    -fx-border-color: -border; -fx-border-radius: 8; -fx-text-fill: -text-primary; -fx-font-size: 15px; -fx-cursor: hand;
++}
++.tab-add:hover { -fx-background-color: -surface-hover; -fx-border-color: -primary; }
++.dot-blue { -fx-fill: -primary; }
++.dot-green { -fx-fill: -success; }
++.dot-amber { -fx-fill: -warning; }
++.status-pill {
++    -fx-font-size: 11px; -fx-text-fill: -text-muted; -fx-padding: 4 10; -fx-graphic-text-gap: 7;
++    -fx-background-color: -surface; -fx-background-radius: 12; -fx-border-color: -border-subtle; -fx-border-radius: 12;
++}
++
++/* ---------- bottom status bar ---------- */
++.bottom-bar {
++    -fx-min-height: 26; -fx-pref-height: 26; -fx-max-height: 26; -fx-padding: 0 16;
++    -fx-background-color: -background; -fx-border-color: -border-subtle; -fx-border-width: 1 0 0 0;
++}
++.status-text { -fx-font-size: 11px; -fx-text-fill: -text-muted; }
++
++/* ---------- home: header, search bar, controls ---------- */
++.home-page { -fx-padding: 36 40 24 40; }
++.page-title { -fx-text-fill: -text-primary; -fx-font-size: 34px; -fx-font-weight: bold; }
++.search-bar {
++    -fx-min-height: 46; -fx-pref-height: 46; -fx-max-height: 46; -fx-padding: 0 12; -fx-spacing: 10;
++    -fx-background-color: -surface; -fx-background-radius: 10; -fx-border-color: -border; -fx-border-radius: 10;
++}
++.search-bar.focused { -fx-border-color: -primary; }
++.search-bar.active { -fx-border-color: -primary; -fx-effect: dropshadow(gaussian, rgba(76, 141, 255, 0.35), 14, 0.1, 0, 0); }
++.search-input, .search-input:focused {
++    -fx-background-color: transparent; -fx-background-insets: 0; -fx-border-color: transparent; -fx-padding: 0;
++    -fx-text-fill: -text-primary; -fx-prompt-text-fill: -text-muted; -fx-font-size: 14px;
++    -fx-highlight-fill: -primary-selection; -fx-highlight-text-fill: -text-primary;
++}
++.search-icon .icon-path { -fx-stroke: -text-muted; }
++.clear-button {
++    -fx-min-width: 22; -fx-pref-width: 22; -fx-min-height: 22; -fx-pref-height: 22; -fx-padding: 0;
++    -fx-background-color: -surface-raised; -fx-background-insets: 0; -fx-background-radius: 11;
++    -fx-text-fill: -text-muted; -fx-font-size: 13px; -fx-cursor: hand;
++}
++.clear-button:hover { -fx-text-fill: -text-primary; -fx-background-color: -surface-hover; }
++.key-badge {
++    -fx-font-size: 10px; -fx-text-fill: -text-muted; -fx-padding: 3 7;
++    -fx-background-color: -surface-raised; -fx-background-radius: 6; -fx-border-color: -border; -fx-border-radius: 6;
++}
++.count-label { -fx-text-fill: -text-muted; -fx-font-size: 13px; }
++.combo-box.sort-box, .sort-box {
++    -fx-background-color: -surface; -fx-background-insets: 0; -fx-background-radius: 8;
++    -fx-border-color: -border; -fx-border-radius: 8; -fx-font-size: 12px;
++}
++.sort-box .list-cell { -fx-background-color: transparent; -fx-text-fill: -text-primary; }
++.sort-box .arrow { -fx-background-color: -text-muted; }
++.combo-box-popup .list-view { -fx-background-color: -surface; -fx-border-color: -border; }
++.combo-box-popup .list-cell { -fx-background-color: -surface; -fx-text-fill: -text-primary; }
++.combo-box-popup .list-cell:hover, .combo-box-popup .list-cell:selected { -fx-background-color: -primary-subtle; }
++
++.segmented { -fx-padding: 3; -fx-spacing: 2; -fx-background-color: -surface; -fx-background-radius: 9; -fx-border-color: -border-subtle; -fx-border-radius: 9; }
++.segmented .toggle-button {
++    -fx-background-color: transparent; -fx-background-insets: 0; -fx-background-radius: 7; -fx-border-color: transparent;
++    -fx-text-fill: -text-muted; -fx-font-family: "JetBrains Mono", "Consolas", monospace; -fx-font-size: 11px; -fx-font-weight: bold;
++    -fx-padding: 5 12; -fx-cursor: hand;
++}
++.segmented .toggle-button:hover { -fx-text-fill: -text-primary; }
++.segmented .toggle-button:selected { -fx-background-color: -primary; -fx-text-fill: -text-primary; }
++
++.section-label { -fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: -text-muted; }
++.empty-state { -fx-text-fill: -text-muted; -fx-font-size: 13px; -fx-padding: 24 0; }
++
++/* ---------- home: note cards ---------- */
++.note-card {
++    -fx-background-color: -surface; -fx-background-radius: 12; -fx-border-color: -border; -fx-border-radius: 12;
++    -fx-padding: 18; -fx-cursor: hand;
++}
++.note-card:hover { -fx-border-color: -primary; -fx-background-color: -surface-hover; }
++.txt-badge {
++    -fx-font-size: 10px; -fx-text-fill: -secondary; -fx-padding: 2 7;
++    -fx-background-color: -primary-subtle; -fx-background-radius: 6;
++}
++.card-title { -fx-text-fill: -text-primary; -fx-font-size: 16px; -fx-font-weight: bold; }
++.card-preview { -fx-text-fill: -text-muted; -fx-font-size: 13px; -fx-line-spacing: 2; }
++.card-divider, .divider-line { -fx-min-height: 1; -fx-pref-height: 1; -fx-max-height: 1; -fx-background-color: -border-subtle; }
++.read-badge {
++    -fx-font-size: 10px; -fx-text-fill: -text-muted; -fx-padding: 2 8;
++    -fx-background-color: -surface-raised; -fx-background-radius: 8; -fx-border-color: -border-subtle; -fx-border-radius: 8;
++}
++
++/* ---------- home: dedicated search view ---------- */
++.search-heading { -fx-text-fill: -text-primary; -fx-font-size: 15px; -fx-font-weight: semibold; }
++.count-badge {
++    -fx-font-size: 11px; -fx-text-fill: -secondary; -fx-padding: 3 10;
++    -fx-background-color: -surface; -fx-background-radius: 12; -fx-border-color: -border-subtle; -fx-border-radius: 12;
++}
++.result-card {
++    -fx-background-color: -surface; -fx-background-radius: 12; -fx-border-color: -border; -fx-border-radius: 12;
++    -fx-padding: 18 20; -fx-cursor: hand;
++}
++.result-card:hover, .result-card.selected { -fx-border-color: -primary; }
++.result-card.selected { -fx-background-color: -surface-hover; }
++.icon-badge { -fx-background-color: -surface-raised; -fx-background-radius: 7; }
++.icon-badge .icon-path { -fx-stroke: -primary; }
++.flow-text { -fx-fill: -text-muted; }
++.title-text { -fx-fill: -text-primary; -fx-font-size: 16px; -fx-font-weight: bold; }
++.snippet-text { -fx-fill: -text-muted; -fx-font-size: 13px; }
++.match-chip { -fx-background-color: -primary-glow; -fx-background-radius: 4; -fx-padding: 0 3; -fx-text-fill: -tertiary; }
++.title-text-hit { -fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: -tertiary; }
++.snippet-text-hit { -fx-font-size: 13px; -fx-font-weight: bold; -fx-text-fill: -secondary; }
++.meta-text { -fx-font-size: 11px; -fx-text-fill: -text-muted; }
++
++/* ---------- editor ---------- */
+ .editor-title { -fx-text-fill: -text-primary; -fx-font-size: 32px; -fx-font-weight: bold; }
+-.note-editor { -fx-background-color: -background; -fx-text-fill: -text-primary; -fx-font-family: "Inter", "Segoe UI", sans-serif; -fx-font-size: 17px; -fx-highlight-fill: -primary; -fx-highlight-text-fill: white; -fx-border-color: transparent; }
+-.note-editor .content { -fx-background-color: -background; -fx-padding: 30 40; }
+-.editor-view > .scroll-pane, .editor-view > .scroll-pane > .viewport, .scroll-pane, .scroll-pane > .viewport { -fx-background-color: -background; }
+-.ai-panel { -fx-background-color: -surface; -fx-border-color: -border; -fx-border-width: 0 0 0 1; -fx-padding: 18; -fx-pref-width: 360; -fx-min-width: 300; }
+-.ai-header { -fx-padding: 0 0 14 0; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0; }
+-.ai-welcome { -fx-padding: 8 0; }
+-.message-list { -fx-background-color: transparent; -fx-control-inner-background: -surface; -fx-border-color: transparent; }
+-.message-list .list-cell { -fx-background-color: -surface; -fx-text-fill: -text-primary; -fx-padding: 12; -fx-wrap-text: true; }
+-.ai-status { -fx-text-fill: -warning; -fx-font-size: 11px; }
+-.suggestion-button { -fx-font-size: 11px; -fx-padding: 7 9; }
+-.scroll-bar:vertical { -fx-pref-width: 8; -fx-background-color: transparent; }
+-.scroll-bar:vertical .thumb { -fx-background-color: -border; -fx-background-radius: 5; }
+-.scroll-bar:vertical .track { -fx-background-color: transparent; }
+-.label { -fx-text-fill: -text-primary; }
++.editor-meta { -fx-text-fill: -text-muted; -fx-font-size: 12px; -fx-font-family: "JetBrains Mono", "Consolas", monospace; }
++.note-editor, .note-editor:focused, .note-editor:hover {
++    -fx-background-color: -background; -fx-background-insets: 0; -fx-background-radius: 0;
++    -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0;
++    -fx-text-fill: -text-primary; -fx-font-family: "Inter", "Segoe UI", sans-serif; -fx-font-size: 16.5px;
++    -fx-highlight-fill: -primary-selection; -fx-highlight-text-fill: -text-primary;
++    -fx-focus-color: transparent; -fx-faint-focus-color: transparent;
++}
++.text-area.note-editor .content { -fx-background-color: -background; -fx-background-insets: 0; -fx-border-color: transparent; -fx-padding: 14 0 0 0; }
++.text-area.note-editor .scroll-pane, .text-area.note-editor .scroll-pane > .viewport { -fx-background-color: -background; -fx-border-color: transparent; }
++
++/* ---------- AI panel ---------- */
++.ai-panel { -fx-background-color: -background; -fx-border-color: -border-subtle; -fx-border-width: 0 0 0 1; -fx-pref-width: 360; -fx-min-width: 310; }
++.ai-header { -fx-min-height: 52; -fx-pref-height: 52; -fx-max-height: 52; -fx-padding: 0 12 0 14; -fx-spacing: 10; -fx-border-color: -border-subtle; -fx-border-width: 0 0 1 0; }
++.ai-badge { -fx-min-width: 28; -fx-pref-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-background-color: -primary; -fx-background-radius: 8; }
++.ai-badge-text { -fx-text-fill: -text-primary; -fx-font-size: 14px; -fx-font-weight: bold; }
++.panel-title { -fx-text-fill: -text-primary; -fx-font-size: 14px; -fx-font-weight: bold; }
++.model-pill { -fx-font-size: 10px; -fx-text-fill: -secondary; -fx-padding: 2 7; -fx-background-color: -surface; -fx-background-radius: 8; -fx-border-color: -border-subtle; -fx-border-radius: 8; }
++.status-online { -fx-font-size: 10px; -fx-text-fill: -success; }
++.status-offline { -fx-font-size: 10px; -fx-text-fill: -text-muted; }
++.chat-box { -fx-padding: 16 14; -fx-spacing: 14; }
++.ai-welcome { -fx-padding: 14; -fx-background-color: -surface; -fx-background-radius: 12; -fx-border-color: -border; -fx-border-radius: 12; }
++.chat-meta { -fx-font-family: "JetBrains Mono", "Consolas", monospace; -fx-font-size: 10px; -fx-text-fill: -text-muted; }
++.user-bubble { -fx-background-color: -primary; -fx-background-radius: 14 14 4 14; -fx-padding: 10 14; -fx-text-fill: -text-primary; -fx-font-size: 13px; }
++.ai-card { -fx-background-color: -surface; -fx-background-radius: 12; -fx-border-color: -border; -fx-border-radius: 12; -fx-padding: 12 14; -fx-spacing: 10; }
++.ai-card.error { -fx-border-color: -danger; }
++.ai-text { -fx-text-fill: -text-primary; -fx-font-size: 13px; -fx-line-spacing: 2; }
++.ai-thinking { -fx-text-fill: -text-muted; -fx-font-size: 12px; }
++.composer-box { -fx-background-color: -surface; -fx-background-radius: 12; -fx-border-color: -border; -fx-border-radius: 12; -fx-padding: 10 10 8 12; -fx-spacing: 6; }
++.composer-box.focus-within { -fx-border-color: -primary; }
++.composer-input, .composer-input:focused {
++    -fx-background-color: transparent; -fx-background-insets: 0; -fx-border-color: transparent; -fx-padding: 0;
++    -fx-text-fill: -text-primary; -fx-prompt-text-fill: -text-muted; -fx-font-size: 13px;
++    -fx-highlight-fill: -primary-selection; -fx-highlight-text-fill: -text-primary;
++}
++.composer-input .content, .composer-input .scroll-pane, .composer-input .scroll-pane > .viewport { -fx-background-color: transparent; }
++.context-pill { -fx-font-size: 10px; -fx-text-fill: -tertiary; -fx-padding: 3 8; -fx-background-color: -primary-subtle; -fx-background-radius: 8; }
++.send-button {
++    -fx-min-width: 28; -fx-pref-width: 28; -fx-max-width: 28; -fx-min-height: 28; -fx-pref-height: 28; -fx-max-height: 28;
++    -fx-padding: 0; -fx-background-color: -primary; -fx-background-insets: 0; -fx-background-radius: 8;
++    -fx-text-fill: -text-primary; -fx-font-size: 14px; -fx-font-weight: bold; -fx-cursor: hand;
++}
++.send-button:hover { -fx-background-color: -secondary; }
++.send-button:disabled { -fx-opacity: 0.5; }
+diff --git a/src/main/resources/com/deepnote/fx/foundation.fxml b/src/main/resources/com/deepnote/fx/foundation.fxml
+index aa43c0f..7f7ff7f 100644
+--- a/src/main/resources/com/deepnote/fx/foundation.fxml
++++ b/src/main/resources/com/deepnote/fx/foundation.fxml
+@@ -2,7 +2,20 @@
+ <?import javafx.scene.control.*?>
+ <?import javafx.scene.layout.*?>
+ <BorderPane xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.FoundationController" fx:id="root" styleClass="app-root">
+-    <top><VBox><HBox fx:id="brandRow" alignment="CENTER_LEFT" styleClass="app-header"><Label text="◆  DeepNote" styleClass="brand"/><Region HBox.hgrow="ALWAYS"/><Label fx:id="modelLabel" styleClass="mono-label"/></HBox><HBox alignment="CENTER_LEFT" styleClass="tab-bar"><TabPane fx:id="tabs" tabClosingPolicy="ALL_TABS" HBox.hgrow="ALWAYS"/><Button fx:id="newHomeButton" text="+" styleClass="icon-button"/></HBox></VBox></top>
+-    <center><StackPane fx:id="workspace"/></center>
+-    <bottom><Label fx:id="statusLabel" text="Local workspace" styleClass="status-line"/></bottom>
++    <top>
++        <HBox fx:id="topBar" alignment="CENTER_LEFT" styleClass="top-bar">
++            <HBox fx:id="tabStrip" alignment="CENTER_LEFT" spacing="6" minWidth="0" HBox.hgrow="ALWAYS">
++                <Button fx:id="newHomeButton" text="+" styleClass="tab-add"/>
++            </HBox>
++            <Label fx:id="statusPill" styleClass="status-pill"/>
++        </HBox>
++    </top>
++    <center><StackPane fx:id="workspace" styleClass="workspace"/></center>
++    <bottom>
++        <HBox alignment="CENTER_LEFT" styleClass="bottom-bar">
++            <Label fx:id="statusLeft" styleClass="status-text"/>
++            <Region HBox.hgrow="ALWAYS"/>
++            <Label fx:id="statusRight" styleClass="status-text"/>
++        </HBox>
++    </bottom>
+ </BorderPane>
+diff --git a/src/main/resources/com/deepnote/fx/home-view.fxml b/src/main/resources/com/deepnote/fx/home-view.fxml
+index 45167f5..a37e286 100644
+--- a/src/main/resources/com/deepnote/fx/home-view.fxml
++++ b/src/main/resources/com/deepnote/fx/home-view.fxml
+@@ -1,16 +1,34 @@
+ <?xml version="1.0" encoding="UTF-8"?>
+ <?import javafx.scene.control.*?>
+ <?import javafx.scene.layout.*?>
+-<VBox xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.HomeViewController" fx:id="root" spacing="24" styleClass="home-page">
+-    <HBox alignment="CENTER_LEFT" spacing="12">
+-        <Label text="Good morning 👋" styleClass="page-title" />
+-        <Region HBox.hgrow="ALWAYS" />
+-        <Button fx:id="newNoteButton" text="+  New note" styleClass="primary-button" />
++<VBox xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.deepnote.fx.HomeViewController" fx:id="root" spacing="20" styleClass="home-page">
++    <HBox fx:id="headerRow" alignment="CENTER_LEFT" spacing="12">
++        <Label fx:id="greetingLabel" styleClass="page-title"/>
++        <Region HBox.hgrow="ALWAYS"/>
++        <Button fx:id="newNoteButton" text="+  New Note" styleClass="primary-button"/>
+     </HBox>
+-    <TextField fx:id="searchField" promptText="Search notes by title or content" styleClass="search-field" />
+-    <HBox alignment="CENTER_RIGHT" spacing="8">
+-        <ToggleButton fx:id="gridButton" text="▦  Grid" styleClass="view-toggle" />
+-        <ToggleButton fx:id="listButton" text="☰  List" styleClass="view-toggle" />
++    <HBox fx:id="searchBar" alignment="CENTER_LEFT" styleClass="search-bar">
++        <StackPane fx:id="searchIcon" styleClass="search-icon"/>
++        <TextField fx:id="searchField" promptText="Search notes by title or content..." styleClass="search-input" HBox.hgrow="ALWAYS"/>
++        <Button fx:id="clearButton" text="×" styleClass="clear-button" focusTraversable="false"/>
++        <Label fx:id="shortcutBadge" text="Ctrl+K" styleClass="key-badge"/>
+     </HBox>
+-    <VBox fx:id="collections" spacing="28" VBox.vgrow="ALWAYS" />
++    <ScrollPane fx:id="scroll" fitToWidth="true" hbarPolicy="NEVER" styleClass="page-scroll" VBox.vgrow="ALWAYS">
++        <content>
++            <VBox fx:id="body" spacing="22">
++                <HBox fx:id="controlsRow" alignment="CENTER_LEFT" spacing="10">
++                    <Label fx:id="countLabel" styleClass="count-label"/>
++                    <Region prefWidth="14"/>
++                    <Label text="Sort by:" styleClass="mono-label"/>
++                    <ComboBox fx:id="sortBox" styleClass="sort-box"/>
++                    <Region HBox.hgrow="ALWAYS"/>
++                    <HBox alignment="CENTER" styleClass="segmented">
++                        <ToggleButton fx:id="gridButton" text="⊞  GRID"/>
++                        <ToggleButton fx:id="listButton" text="☰  LIST"/>
++                    </HBox>
++                </HBox>
++                <VBox fx:id="collections" spacing="28"/>
++            </VBox>
++        </content>
++    </ScrollPane>
+ </VBox>
